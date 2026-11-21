@@ -1,0 +1,4 @@
+{"targets": [
+  {"target": "172.30.0.0/28", "note": "pierwsza polowa sieci testowej"},
+  "172.30.0.30"
+]}

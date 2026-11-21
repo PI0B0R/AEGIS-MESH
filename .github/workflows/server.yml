@@ -1,0 +1,50 @@
+name: Server
+
+on:
+  push:
+    paths: ["server/**", "lab/**", "docker-compose.yml", ".github/workflows/server.yml"]
+  pull_request:
+    paths: ["server/**", "lab/**", "docker-compose.yml", ".github/workflows/server.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt -e .
+      - run: pytest -q
+
+  lab:
+    needs: unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r server/requirements-dev.txt -e server
+      - name: Start server and test network
+        run: docker compose up -d --build --wait
+      - name: Two scans of the test network
+        working-directory: server
+        env:
+          AEGIS_URL: http://127.0.0.1:8000
+        run: pytest -q -m lab
+      - name: Commands for the jury
+        if: always()
+        run: |
+          docker compose exec -T aegis aegis scan list || true
+          docker compose exec -T aegis aegis hosts || true
+          docker compose logs aegis | tail -50
+      - if: always()
+        run: docker compose down -v

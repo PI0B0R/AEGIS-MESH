@@ -1,0 +1,4 @@
+cel,notatka
+172.30.0.20,serwer www nginx
+172.30.0.21-22,apache i staging
+172.30.0.30,cache redis

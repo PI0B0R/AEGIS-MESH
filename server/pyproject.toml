@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aegis-mesh"
+version = "0.1.0"
+description = "AEGIS MESH: discovery scanner for large networks"
+requires-python = ">=3.11"
+dependencies = ["fastapi", "uvicorn", "cryptography"]
+
+[project.scripts]
+aegis = "aegis.cli:main"
+
+[tool.setuptools]
+packages = ["aegis"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["lab: needs the docker compose test network (AEGIS_URL)"]

@@ -1,0 +1,51 @@
+# AEGIS MESH: server + a small test network that imitates the jury's lab.
+#   docker compose up -d --build
+#   docker compose exec aegis aegis targets add 172.30.0.0/27
+#   docker compose exec aegis aegis scan start --wait
+#   docker compose exec aegis aegis hosts
+# API and its documentation: http://127.0.0.1:8000/docs
+
+name: aegis-mesh
+
+services:
+  aegis:
+    build: ./server
+    image: aegis-mesh/server:dev
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"           # localhost only until login and roles arrive (stage 3)
+    volumes:
+      - aegis-data:/data                # database
+      - aegis-keys:/keys                # encryption key, kept apart from the database
+    environment:
+      AEGIS_TZ: Europe/Warsaw
+    cap_add: [NET_RAW, NET_ADMIN]       # nmap host discovery and SYN scan
+    networks:
+      lab:
+        ipv4_address: 172.30.0.10
+
+  # ---- test network (lab) -------------------------------------------------------
+  web-nginx:
+    image: nginx:1.27-alpine
+    networks: { lab: { ipv4_address: 172.30.0.20 } }
+  web-apache:
+    image: httpd:2.4-alpine
+    networks: { lab: { ipv4_address: 172.30.0.21 } }
+  staging:
+    image: python:3.12-alpine
+    command: ["python", "-m", "http.server", "8080", "--directory", "/srv"]
+    volumes: ["./lab/staging:/srv:ro"]
+    networks: { lab: { ipv4_address: 172.30.0.22 } }
+  cache:
+    image: redis:7.4-alpine
+    networks: { lab: { ipv4_address: 172.30.0.30 } }
+
+volumes:
+  aegis-data:
+  aegis-keys:
+
+networks:
+  lab:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
