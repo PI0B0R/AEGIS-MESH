@@ -53,14 +53,4 @@ class RadioTest {
         assertEquals(-70.0, smooth(null, -70), 0.01)
         assertEquals(-66.0, smooth(-70.0, -60), 0.01)
     }
-    @Test fun invitesFromQr() {
-        val t = "A".repeat(43); val fp = "ab".repeat(32)
-        assertEquals(Invite("https://192.168.1.5:8767", t, fp), parseInvite("https://192.168.1.5:8767/phone-beacon#t=$t&fp=$fp"))
-        assertEquals(Invite("http://10.0.0.2:8767", t, null), parseInvite("http://10.0.0.2:8767/phone-beacon#$t"))
-        assertNull(parseInvite("http://8.8.8.8:8767/phone-beacon#t=$t"))          // HTTP only inside the LAN
-        assertNull(parseInvite("https://192.168.1.5:8767/phone-beacon#t=short"))
-        assertNull(parseInvite("https://192.168.1.5:8767/phone-beacon#t=$t&fp=zz"))
-        assertNull(parseInvite("aegis-place:B1/2/215"))
-    }
-    @Test fun fingerprintHex() = assertEquals(64, sha256Hex(byteArrayOf(1, 2, 3)).length)
 }

@@ -43,19 +43,3 @@ internal fun storeKnown(context: Context, text: String): Int {
     cache = null
     return list.size
 }
-
-/** Downloads the laptop's known-router list (its inventory). Quietly keeps the old list on failure. */
-internal fun syncKnown(context: Context, prefs: SharedPreferences): Int? = runCatching {
-    val origin = prefs.getString("origin", null) ?: return null
-    val key = prefs.getString("key", null) ?: return null
-    val rows = post(origin, "/known", org.json.JSONObject(), key, prefs.getString("fp", null)).getJSONArray("routers")
-    if (rows.length() == 0) return 0
-    fun cell(v: String) = "\"" + v.replace("\"", "\"\"") + "\""
-    val csv = StringBuilder("ssid,bssid,security\n")
-    for (i in 0 until rows.length()) {
-        val r = rows.getJSONObject(i)
-        csv.append(cell(r.optString("ssid"))).append(',').append(r.getString("bssid")).append(',').append(r.optString("security")).append('\n')
-    }
-    storeKnown(context, csv.toString())
-}.getOrNull()
-

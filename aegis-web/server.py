@@ -35,58 +35,11 @@ PHONE_LOCK = threading.Lock()
 
 
 def lan_addresses():
-    addresses = set()
     try:
-        addresses.update(socket.gethostbyname_ex(socket.gethostname())[2])
+        addresses = socket.gethostbyname_ex(socket.gethostname())[2]
+        return sorted({addr for addr in addresses if phone_pairing.private_ip(addr)})
     except OSError:
-        pass
-    # Linux and macOS often resolve the hostname to 127.0.1.1 only; ask the routing table instead.
-    # A UDP "connect" sends no packet, it only picks the outgoing interface.
-    for target in ("192.168.0.1", "10.0.0.1", "8.8.8.8"):
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-                probe.connect((target, 9))
-                addresses.add(probe.getsockname()[0])
-        except OSError:
-            pass
-    return sorted(addr for addr in addresses if phone_pairing.private_ip(addr))
-
-
-def preferred_address(addresses):
-    """Home and lab Wi-Fi is usually 192.168.x.x, then 10.x, then 172.16-31.x."""
-    order = lambda a: (0 if a.startswith("192.168.") else 1 if a.startswith("10.") else 2, a)
-    return sorted(addresses, key=order)[0]
-
-
-def quick_pairing(server, renew=False):
-    """One QR, no choices: LAN address picked automatically, HTTPS pinned by fingerprint in the QR."""
-    addresses = lan_addresses()
-    if not addresses:
-        raise ValueError("Laptop nie ma adresu w sieci lokalnej. Połącz go z tą samą siecią Wi-Fi co telefon.")
-    address = preferred_address(addresses)
-    beacon = server.beacon
-    if beacon and (getattr(beacon, "mode", None) != "quick" or beacon.address != address):
-        phone_pairing.close_beacon(beacon)
-        server.beacon = server.phone_ca = beacon = None
-    if not beacon:
-        try:
-            beacon, server.phone_ca = phone_pairing.listen(address, 8767, server.database)
-        except (OSError, subprocess.SubprocessError):
-            # No OpenSSL on this laptop: plain HTTP in the LAN (accepted by the debug APK only).
-            beacon, server.phone_ca = phone_pairing.listen(address, 8767, server.database, cleartext=True)
-        beacon.mode, beacon.address = "quick", address
-        server.beacon = beacon
-    phone = beacon.phone
-    with phone.lock:
-        live = phone.invite and time.monotonic() - phone.started <= phone.invite_seconds
-        if renew or (not phone.key and not live):
-            phone.start(invite_seconds=600, lifetime=12 * 3600)
-            live = True
-        result = {"paired": bool(phone.key), "address": address, "secure": phone.url.startswith("https"),
-                  "session": phone.session, "seen": round(time.time() - phone.seen) if phone.seen else None}
-        if live and phone.invite:
-            result["qr"] = phone.url + "/phone-beacon#t=" + phone.invite + ("&fp=" + phone.fingerprint if phone.fingerprint else "")
-    return result
+        return []
 
 
 def sensor_point(db, data, phone=None):
@@ -233,7 +186,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.reply({"saved":True})
             except (ValueError,TypeError,AttributeError) as error:
                 return self.reply({"error":str(error)},400)
-        if self.path in ("/api/phone/start","/api/phone/status","/api/phone/stop","/api/phone/control","/api/phone/quick"):
+        if self.path in ("/api/phone/start","/api/phone/status","/api/phone/stop","/api/phone/control"):
             if not self.local_request() or self.headers.get("X-Aegis-Session") != "1":
                 return self.reply({"error":"Parowanie jest dostępne w lokalnym panelu laptopa."},403)
             try:
@@ -256,8 +209,6 @@ class Handler(SimpleHTTPRequestHandler):
                             self.server.beacon.mode=host
                         self.server.beacon.console.stop()
                         result = self.server.beacon.phone.start(invite_seconds=900 if online else 120)
-                    elif self.path.endswith("/quick"):
-                        result = quick_pairing(self.server, bool(data.get("new")))
                     elif self.path.endswith("/control"):
                         result={}
                         if self.server.beacon:

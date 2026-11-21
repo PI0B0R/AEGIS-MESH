@@ -64,9 +64,6 @@ def save(db, session, data, scoped):
         if room is None:
             raise ValueError("Pozycja ręczna wymaga budynku.")
         accuracy = None
-    elif provider == "none":
-        # No GPS and no place set: keep the radio report, just without a pin.
-        room, accuracy = None, None
     else:
         raise ValueError("Wymagana pozycja GPS albo miejsce ręczne.")
     rows = data["networks"]
@@ -102,11 +99,8 @@ def save(db, session, data, scoped):
     if provider == "gps":
         location = {"source": "paired_phone_gnss", "accuracy": accuracy, "at": at}
         point = {"lat": fix["lat"], "lng": fix["lng"], "location": location}
-    elif provider == "manual":
-        location = {"source": "paired_phone_manual", "at": at}
-        point = {"location": location}
     else:
-        location = {"source": "none", "reason": "phone_unavailable", "at": at}
+        location = {"source": "paired_phone_manual", "at": at}
         point = {"location": location}
     if room:
         location["place"] = room
@@ -120,7 +114,7 @@ def save(db, session, data, scoped):
                    (scan, session, sensor, ts, fix["lat"], fix["lng"], accuracy, location["source"]))
     else:
         db.execute("INSERT INTO place_fixes VALUES (?,?,?,?,?,?,?)",
-                   (scan, session, sensor, ts, *(room[k] if room else "" for k in ("building", "floor", "room"))))
+                   (scan, session, sensor, ts, room["building"], room["floor"], room["room"]))
     db.executemany("UPDATE wifi_observations SET rssi_dbm=?,frequency_mhz=?,capabilities=?,radio_age_ms=? "
                    "WHERE scan_id=? AND bssid=?", ((v[2], v[3], v[1], v[5], scan, mac) for mac, v in radios.items()))
     result = {"scan_id": scan, "points": saved["added"], "new_cases": saved["new_cases"]}

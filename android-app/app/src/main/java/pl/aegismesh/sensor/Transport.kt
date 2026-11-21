@@ -3,15 +3,6 @@ package pl.aegismesh.sensor
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
-import java.security.MessageDigest
-import java.security.SecureRandom
-import java.security.cert.CertificateException
-import java.security.cert.X509Certificate
-import javax.net.ssl.HostnameVerifier
-import javax.net.ssl.HttpsURLConnection
-import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLSocketFactory
-import javax.net.ssl.X509TrustManager
 import org.json.JSONObject
 
 internal fun serverOrigin(input: String): String {
@@ -28,37 +19,8 @@ internal fun serverOrigin(input: String): String {
 
 internal class HttpFailure(val code: Int, message: String) : Exception("HTTP " + code + " · " + message)
 
-/** SHA-256 of a certificate as lowercase hex, the same form the laptop puts in the QR code. */
-internal fun sha256Hex(der: ByteArray): String =
-    MessageDigest.getInstance("SHA-256").digest(der).joinToString("") { "%02x".format(it) }
-
-/**
- * Certificate pinning: the laptop's self-signed certificate is trusted only if its SHA-256
- * matches the fingerprint from the pairing QR. No CA has to be installed on the phone.
- */
-private val pinned = HashMap<String, SSLSocketFactory>()
-internal fun pinnedFactory(fingerprint: String): SSLSocketFactory = synchronized(pinned) {
-    pinned.getOrPut(fingerprint) {
-        val trust = object : X509TrustManager {
-            override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) = throw CertificateException()
-            override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
-                val seen = sha256Hex(chain.first().encoded)
-                if (!MessageDigest.isEqual(seen.toByteArray(), fingerprint.lowercase().toByteArray()))
-                    throw CertificateException("Certyfikat laptopa nie zgadza się z kodem QR.")
-            }
-            override fun getAcceptedIssuers() = arrayOf<X509Certificate>()
-        }
-        SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), SecureRandom()) }.socketFactory
-    }
-}
-
-internal fun post(origin: String, path: String, body: JSONObject, key: String = "", fingerprint: String? = null): JSONObject {
+internal fun post(origin: String, path: String, body: JSONObject, key: String = ""): JSONObject {
     val connection = URL(origin + path).openConnection() as HttpURLConnection
-    if (connection is HttpsURLConnection && !fingerprint.isNullOrEmpty()) {
-        connection.sslSocketFactory = pinnedFactory(fingerprint)
-        // The pinned leaf certificate already proves who the laptop is.
-        connection.hostnameVerifier = HostnameVerifier { _, _ -> true }
-    }
     try {
         connection.instanceFollowRedirects = false
         connection.requestMethod = "POST"
@@ -87,17 +49,3 @@ internal fun wifiChannel(f: Int): Int? = when {
     f in 5955..7115 -> (f - 5950) / 5
     else -> null
 }
-
-/** Pairing QR from the laptop: https://IP:8767/phone-beacon#t=TOKEN&fp=SHA256 (older codes: #TOKEN). */
-data class Invite(val origin: String, val token: String, val fingerprint: String?)
-internal fun parseInvite(text: String): Invite? = runCatching {
-    val uri = java.net.URI(text.trim())
-    val origin = serverOrigin(text)
-    val fragment = uri.rawFragment.orEmpty()
-    val fields = fragment.split('&').mapNotNull { part -> part.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap()
-    val token = fields["t"] ?: fragment
-    val fp = fields["fp"]?.lowercase()
-    if (!Regex("[A-Za-z0-9_-]{43}").matches(token)) return null
-    if (fp != null && !Regex("[0-9a-f]{64}").matches(fp)) return null
-    Invite(origin, token, fp)
-}.getOrNull()

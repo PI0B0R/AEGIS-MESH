@@ -56,7 +56,6 @@ class SensorService : Service(), LocationListener {
         prefs.edit().putBoolean("active", true).putString("status", "Czujnik uruchomiony").apply()
         // GPS is optional: indoors the manual place (building / floor / room) is used instead.
         runCatching { location.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, this, mainLooper) }
-        executor.execute { syncKnown(this, prefs) }
         executor.scheduleWithFixedDelay(::tick, 0, PERIOD_S, TimeUnit.SECONDS)
         return START_NOT_STICKY
     }
@@ -82,7 +81,10 @@ class SensorService : Service(), LocationListener {
                 report("Brak sparowania z laptopem. Alerty działają lokalnie · widoczne punkty: ${scan.size}")
                 return
             }
-            val point = position()
+            val point = position() ?: run {
+                report("Brak GPS do 50 m i brak miejsca ręcznego. Ustaw Miejsce · widoczne punkty: ${scan.size}")
+                return
+            }
             val scoped = prefs.getString("scope", "AGH-LAB") != "local"
             val rows = JSONArray()
             for (ap in scan) {
@@ -95,15 +97,11 @@ class SensorService : Service(), LocationListener {
             }
             val body = JSONObject().put("sensor_id", sensorId(prefs)).put("location", point).put("networks", rows)
             if (!running) return
-            post(origin, "/api/mobile-telemetry", body, key, prefs.getString("fp", null))
-            prefs.edit().putInt("sent", prefs.getInt("sent", 0) + 1).putLong("sent_at", System.currentTimeMillis()).apply()
+            post(origin, "/api/mobile-telemetry", body, key)
             lastScanMicros = newest
-            val where = when (point.getString("provider")) {
-                "gps" -> "GPS ±" + point.getDouble("accuracy").toInt() + " m"
-                "manual" -> "miejsce: " + savedPlace(prefs)
-                else -> "bez lokalizacji (ustaw miejsce w ⋯ Więcej)"
-            }
-            report("Ostatni raport: $where · sieci: ${rows.length()}" + if (requested) "" else " · skan z pamięci Androida")
+            val where = if (point.getString("provider") == "gps") "GPS ±" + point.getDouble("accuracy").toInt() + " m"
+                else "miejsce: " + savedPlace(prefs)
+            report("HTTP 200 · $where · wysłano: ${rows.length()}" + if (requested) "" else " · skan z pamięci Androida")
         } catch (e: Exception) {
             if (e is HttpFailure && e.code == 401) {
                 prefs.edit().remove("key").apply()
@@ -113,17 +111,16 @@ class SensorService : Service(), LocationListener {
     }
 
     /** Fresh GPS fix (≤ 50 m, ≤ 15 s) first; otherwise the place set by hand or from a door QR code. */
-    private fun position(): JSONObject {
+    private fun position(): JSONObject? {
         val manual = savedPlace(prefs)
         val fix = latest
         val point = if (fix != null && fix.hasAccuracy() && fix.accuracy <= 50 &&
             SystemClock.elapsedRealtimeNanos() - fix.elapsedRealtimeNanos in 0L..15_000_000_000L) {
             JSONObject().put("provider", "gps").put("lat", fix.latitude).put("lng", fix.longitude)
                 .put("accuracy", fix.accuracy.toDouble()).put("timestamp", fix.time / 1000.0)
-        } else {
-            // No GPS fix: send the manual place if set, otherwise the scan alone (no pin on the map).
-            JSONObject().put("provider", if (manual != null) "manual" else "none").put("timestamp", System.currentTimeMillis() / 1000.0)
-        }
+        } else if (manual != null) {
+            JSONObject().put("provider", "manual").put("timestamp", System.currentTimeMillis() / 1000.0)
+        } else return null
         if (manual != null) point.put("place", JSONObject().put("building", manual.building)
             .put("floor", manual.floor).put("room", manual.room))
         return point

@@ -111,14 +111,3 @@ class TelemetryTest(unittest.TestCase):
             with db:
                 result = mobile_telemetry.save(db,"session",data,True)
             self.assertEqual(result["location"]["location"]["place"]["building"],"C2")
-
-    def test_scan_without_any_location(self):
-        with closing(sqlite3.connect(":memory:")) as db:
-            with db:
-                wifi.initialize(db)
-            data = batch()
-            data["location"] = {"provider":"none","timestamp":time.time()}
-            with db:
-                result = mobile_telemetry.save(db,"session",data,True)
-            self.assertEqual(result["points"],2)
-            self.assertEqual(db.execute("SELECT lat,location FROM wifi_scans").fetchone()[0],None)
