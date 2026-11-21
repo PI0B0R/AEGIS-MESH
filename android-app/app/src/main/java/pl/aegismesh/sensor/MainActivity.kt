@@ -31,6 +31,7 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
     private val ticker = Handler(Looper.getMainLooper())
     private lateinit var page: WebView
     private lateinit var list: ListView
+    private lateinit var radar: RadarView
     private lateinit var status: TextView
     private lateinit var where: TextView
     private lateinit var summary: TextView
@@ -49,36 +50,42 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
-        val frame = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; fitsSystemWindows = true; setPadding(8, 8, 8, 0) }
+        val frame = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; fitsSystemWindows = true; setPadding(12, 12, 12, 0)
+            setBackgroundColor(Palette.BLACK) }
+        window.statusBarColor = Palette.BLACK
+        window.navigationBarColor = Palette.BLACK
+        frame.addView(TextView(this).apply { text = "◆ AEGIS MESH"; textSize = 20f; letterSpacing = 0.15f
+            setTypeface(typeface, Typeface.BOLD); ink(Palette.GOLD); setPadding(12, 4, 12, 8) })
         connect = button("Połącz") { configure() }
-        toggle = button("") { toggleSensor() }
+        toggle = button("") { toggleSensor() }.apply { gold() }
         frame.addView(row(connect, toggle))
         panel = button("Panel laptopa") { togglePanel() }
         frame.addView(row(button("Miejsce") { editPlace() }, button("Znane routery") { importKnown() }, panel))
-        where = TextView(this).apply { setPadding(12, 8, 12, 0); setTypeface(typeface, Typeface.BOLD) }
-        status = TextView(this).apply { setPadding(12, 4, 12, 4) }
-        summary = TextView(this).apply { setPadding(12, 0, 12, 8) }
+        where = TextView(this).apply { setPadding(12, 8, 12, 0); setTypeface(typeface, Typeface.BOLD); ink(Palette.GOLD) }
+        status = TextView(this).apply { setPadding(12, 4, 12, 4); ink() }
+        summary = TextView(this).apply { setPadding(12, 0, 12, 8); ink(Palette.MUTED) }
         frame.addView(where); frame.addView(status); frame.addView(summary)
+        radar = RadarView(this).apply { onPing = { openRadar(it.ap) } }
+        frame.addView(radar, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1.1f))
         adapter = object : ArrayAdapter<Row>(this, android.R.layout.simple_list_item_2, android.R.id.text1, mutableListOf()) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val view = super.getView(position, convertView, parent)
                 val item = getItem(position)!!
                 view.findViewById<TextView>(android.R.id.text1).apply {
-                    text = "${item.verdict.status.label} · ${item.ap.ssid.ifEmpty { "(ukryta sieć)" }} · ${item.ap.rssi} dBm"
-                    setTextColor(color(item.verdict.status))
+                    text = "● ${item.verdict.status.label} · ${item.ap.ssid.ifEmpty { "(ukryta sieć)" }} · ${item.ap.rssi} dBm"
+                    setTextColor(Palette.status(item.verdict.status))
                 }
-                view.findViewById<TextView>(android.R.id.text2).text =
-                    "${item.ap.bssid} · ${securityMode(item.ap.flags)} · ${item.verdict.reason}"
+                view.findViewById<TextView>(android.R.id.text2).apply {
+                    text = "${item.ap.bssid} · ${securityMode(item.ap.flags)} · ${item.verdict.reason}"
+                    setTextColor(Palette.MUTED)
+                }
                 return view
             }
         }
         list = ListView(this).apply {
             adapter = this@MainActivity.adapter
-            setOnItemClickListener { _, _, position, _ ->
-                val item = this@MainActivity.adapter.getItem(position)!!
-                startActivity(Intent(this@MainActivity, HotColdActivity::class.java)
-                    .putExtra("bssid", item.ap.bssid).putExtra("ssid", item.ap.ssid))
-            }
+            divider = android.graphics.drawable.ColorDrawable(Palette.GOLD_DIM); dividerHeight = 1
+            setOnItemClickListener { _, _, position, _ -> openRadar(this@MainActivity.adapter.getItem(position)!!.ap) }
         }
         frame.addView(list, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
         page = WebView(this).apply { visibility = View.GONE }
@@ -108,15 +115,12 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
             requestPermissions(permissions.toTypedArray(), 1)
     }
 
-    private fun button(label: String, action: () -> Unit) = Button(this).apply { text = label; setOnClickListener { action() } }
+    private fun button(label: String, action: () -> Unit) = Button(this).apply { text = label; gold(outline = true); setOnClickListener { action() } }
+    private fun dialog() = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+    private fun openRadar(ap: SeenAp) = startActivity(Intent(this, HotColdActivity::class.java)
+        .putExtra("bssid", ap.bssid).putExtra("ssid", ap.ssid))
     private fun row(vararg views: View) = LinearLayout(this).apply {
         views.forEach { addView(it, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)) }
-    }
-    private fun color(s: Status) = when (s) {
-        Status.SUSPICIOUS -> Color.rgb(198, 40, 40)
-        Status.HOTSPOT -> Color.rgb(230, 81, 0)
-        Status.NEW -> Color.rgb(21, 101, 192)
-        Status.KNOWN -> Color.rgb(46, 125, 50)
     }
 
     override fun onResume() { super.onResume(); refresh() }
@@ -136,6 +140,7 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
                 Row(ap, classify(ap, known))
             }.sortedWith(compareBy<Row>({ it.verdict.status.rank }, { -it.ap.rssi }))
             adapter.clear(); adapter.addAll(rows)
+            radar.pings = rows.map { RadarView.Ping(it.ap, it.verdict.status) }
             val counts = rows.groupingBy { it.verdict.status }.eachCount()
             summary.text = Status.values().joinToString(" · ") { "${it.label}: ${counts[it] ?: 0}" } +
                 " · lista znanych: ${known.size}"
@@ -164,7 +169,7 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
         val address = EditText(this).apply { hint = "Adres sesji telefonu"; setSingleLine(); setText(prefs.getString("origin", "")) }
         val pin = EditText(this).apply { hint = "Jednorazowy PIN (8 cyfr)"; inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD }
         fields.addView(address); fields.addView(pin)
-        AlertDialog.Builder(this).setTitle("Połączenie z laptopem").setView(fields)
+        dialog().setTitle("Połączenie z laptopem").setView(fields)
             .setNeutralButton("Skanuj QR") { _, _ -> scanQr(::handleQr) }
             .setNegativeButton("Anuluj", null).setPositiveButton("Połącz") { _, _ ->
                 runCatching { pairAddress(address.text.toString(), pin.text.toString()) }
@@ -179,7 +184,7 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
         val building = field("Budynek, np. B1", current?.building)
         val floor = field("Piętro, np. 2", current?.floor)
         val room = field("Sala, np. 215", current?.room)
-        AlertDialog.Builder(this).setTitle("Gdzie jesteś?")
+        dialog().setTitle("Gdzie jesteś?")
             .setMessage("W budynku GPS zwykle nie działa. To miejsce dołączamy do raportów, gdy nie ma dobrego GPS.")
             .setView(fields)
             .setNeutralButton("QR z drzwi") { _, _ -> scanQr(::handleQr) }
@@ -238,6 +243,7 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
         if (show) page.loadUrl(prefs.getString("origin", "") + "/phone-beacon#apk=" + prefs.getString("key", ""))
         page.visibility = if (show) View.VISIBLE else View.GONE
         list.visibility = if (show) View.GONE else View.VISIBLE
+        radar.visibility = list.visibility
         panel.text = if (show) "Lista sieci" else "Panel laptopa"
     }
 

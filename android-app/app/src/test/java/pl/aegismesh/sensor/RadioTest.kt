@@ -44,4 +44,13 @@ class RadioTest {
         assertEquals("Bez zmian", trend(-60, -61))
         assertEquals(0, signalPercent(-100)); assertEquals(100, signalPercent(-30))
     }
+    @Test fun coneNarrowsWhenClose() {
+        assertEquals(8.0, coneHalfAngle(-35.0), 0.01)
+        assertEquals(70.0, coneHalfAngle(-95.0), 0.01)
+        assertTrue(coneHalfAngle(-50.0) < coneHalfAngle(-75.0))
+    }
+    @Test fun smoothingDampsJumps() {
+        assertEquals(-70.0, smooth(null, -70), 0.01)
+        assertEquals(-66.0, smooth(-70.0, -60), 0.01)
+    }
 }

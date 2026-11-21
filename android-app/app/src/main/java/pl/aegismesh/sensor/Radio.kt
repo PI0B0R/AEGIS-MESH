@@ -131,3 +131,16 @@ fun trend(previous: Int?, current: Int): String = when {
 
 /** Rough 0-100 % bar for -95 dBm (nothing) .. -35 dBm (next to the router). */
 fun signalPercent(rssi: Int) = ((rssi + 95) * 100 / 60).coerceIn(0, 100)
+
+/**
+ * Exponential smoothing of RSSI. Single Wi-Fi readings jump by ±5 dB even when standing still,
+ * so the hot-cold view shows a smoothed value. alpha 0.4 = new reading weighs 40 %.
+ */
+fun smooth(previous: Double?, reading: Int, alpha: Double = 0.4): Double =
+    if (previous == null) reading.toDouble() else previous + alpha * (reading - previous)
+
+/** 0.0 = right next to the router (≥ -40 dBm), 1.0 = far away (≤ -90 dBm). */
+fun distanceFactor(rssi: Double): Double = ((-40.0 - rssi) / 50.0).coerceIn(0.0, 1.0)
+
+/** Half-angle of the search cone in degrees: narrow (8°) when close, wide (70°) when far. */
+fun coneHalfAngle(rssi: Double): Double = 8.0 + 62.0 * distanceFactor(rssi)

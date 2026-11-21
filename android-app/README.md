@@ -18,7 +18,7 @@ Telefon jest czujnikiem radiowym, nie skanerem sieci. Widzi punkty dostępowe (S
 - **Znane routery.** Przycisk wczytuje plik CSV `ssid,bssid,security`, ten sam format co `aegis-web/static/examples/inventory.csv`.
 - **Czujnik w tle.** Usługa pierwszoplanowa co 30 s prosi Androida o skan (system pozwala na około 4 skany na 2 minuty), wysyła tylko nowe wyniki i pokazuje powiadomienie o każdym nowym podejrzanym punkcie lub hotspocie. Każda instalacja ma własny identyfikator `PHONE-XXXXXXXX`.
 - **Miejsce.** W budynku GPS rzadko daje dokładność do 50 m. Wtedy raport dostaje budynek, piętro i salę wpisane ręcznie albo odczytane z kodu QR na drzwiach. Kody do druku generuje strona `/place-qr.html` serwera (treść kodu: `aegis-place:B1/2/215`). Przy dobrym GPS wysyłane są współrzędne i dodatkowo miejsce.
-- **Ciepło-zimno.** Dotknięcie punktu na liście otwiera ekran z siłą sygnału na żywo. Idź tam, gdzie liczba rośnie. Na demo wyłącz w opcjach programisty „Ograniczanie skanowania Wi-Fi”, wtedy odczyt przychodzi co kilka sekund.
+- **Radar i ciepło-zimno.** Ekran główny ma czarno-złoty radar: każdy router to ping, im bliżej środka, tym silniejszy sygnał (kąt tylko rozsuwa pingi, Wi-Fi nie podaje kierunku). Dotknięcie pinga albo wiersza listy otwiera stożek ciepło-zimno: daleko jest szeroki i czerwony, blisko wąski i zielony. Siła sygnału jest wygładzana, bo pojedyncze odczyty skaczą o kilka dB. Dotknięcie pinga na górze stożka włącza tryb szybki (skan co 2 s). Android pozwala aplikacji na 4 skany w 2 minuty, więc żeby odczyt naprawdę przychodził co 2 s, wyłącz w opcjach programisty „Ograniczanie skanowania Wi-Fi”.
 - **Panel laptopa.** Mapa i alerty z serwera są w widoku WebView pod przyciskiem „Panel laptopa”.
 
 ## Zasady pomiaru
