@@ -1,0 +1,24 @@
+AEGIS-MESH
+Mobilny monitoring zmian w usługach sieciowych i sieciach Wi-Fi
+
+Opis do zgłoszenia
+
+AEGIS-MESH to prototyp dla zespołu bezpieczeństwa, który pomaga odpowiedzieć na dwa pytania: co zmieniło się w obserwowanej sieci i na jakiej podstawie warto to sprawdzić? W odpowiedzi na wyzwanie AGH „Attack Surface Intelligence” opracowaliśmy aplikację webową, w której operator może na telefonie porównać kolejne pomiary usług HTTP i HTTPS. Dodatkowy moduł terenowy porównuje punkty dostępowe Wi-Fi z zatwierdzoną konfiguracją. Laptop wykonuje pomiary i zapisuje wyniki, a sparowany telefon pokazuje mapę, alerty i szczegóły potrzebne do sprawdzenia zgłoszenia na miejscu.
+
+Co pokazujemy jury
+
+W zakładce „Usługi AGH” operator uruchamia dwa przebiegi pomiaru dwóch lokalnych usług testowych. W jednym ze scenariuszy usługa, która początkowo odpowiada kodem HTTP 200, w drugim przebiegu zwraca 503. Operator widzi oba wyniki obok siebie i może sprawdzić czas odpowiedzi, tytuł strony oraz nagłówek serwera. Raport obejmuje również nazwy ciasteczek i wersję protokołu TLS użytego w połączeniu HTTPS. Można go wyeksportować do JSON i później ponownie otworzyć. Osobne scenariusze pokazują stabilną usługę oraz przekroczenie czasu oczekiwania.
+
+Jak działa moduł terenowy
+
+Laptop może korzystać z internetu przez Ethernet. Jego karta Wi-Fi służy do obserwacji wybranej sieci. Podczas aktywnej sesji serwer napisany w Pythonie odczytuje raport Windows co około 30 sekund i zapisuje wyniki w SQLite. Dla wykrytego punktu zachowuje nazwę sieci, identyfikator radiowy (BSSID), sposób zabezpieczenia oraz dostępne informacje o sygnale i kanale.
+
+Przykład pokazowy dotyczy sieci AGH-LAB. Jej zatwierdzona konfiguracja wymaga uwierzytelniania 802.1X. Kiedy w danych przykładowych pojawia się otwarty punkt o tej samej nazwie, operator widzi alert, identyfikator punktu i różnicę w zabezpieczeniach. Może sprawdzić urządzenie na miejscu i zapisać wynik oględzin. Rozbieżność jest podstawą do sprawdzenia, a o jej przyczynie rozstrzyga operator.
+
+Mapa i położenie
+
+Telefon udostępnia pozycję po zgodzie użytkownika. Mapa pokazuje ją wraz z szacowaną dokładnością. Stojąc przy laptopie, operator może potwierdzić miejsce ustawienia czujnika. Gdy odejdzie, pozycja telefonu może się zmieniać, a punkt pomiarowy pozostaje przy laptopie. Oznacza on miejsce odbioru sygnału. Do wskazania strefy sali wymagane są porównywalne, świeże obserwacje z co najmniej dwóch stref.
+
+Zakres prototypu i dalszy rozwój
+
+Obecna wersja demonstruje porównanie lokalnych usług, raportowanie zmian i odczyty Wi-Fi z rzeczywistego stanowiska. Kolejnymi etapami realizacji zadania AGH są m.in. obsługa zakresów przekraczających 10 000 adresów IP, planowanie i ograniczanie intensywności skanów, role użytkowników oraz szyfrowanie danych w spoczynku. Analiza oparta na AI pozostaje kierunkiem rozwoju. Aktualne alerty wynikają z porównania zaobserwowanych danych i konfiguracji.

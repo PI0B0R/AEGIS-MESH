@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#122b29"><title>AEGIS Mesh · Panel terenowy</title>
+<link rel="stylesheet" href="/vendor/leaflet.css"><link rel="stylesheet" href="/mobile.css"></head>
+<body><header class="top"><div class="shell brandrow"><a href="#" id="home"><span class="brandmark" aria-hidden="true">◇</span> AEGIS <b>MESH</b></a><span id="connection" class="connection">Łączenie…</span></div></header>
+<main class="shell"><section id="pairGate" hidden class="card"><h2>Połącz z laptopem</h2><p id="pinEntry"><label>Jednorazowy PIN z panelu laptopa <input id="phonePin" inputmode="numeric" maxlength="8" autocomplete="one-time-code" placeholder="8 cyfr"></label></p><button id="join" class="solid">Połącz</button><p id="joinStatus" role="status"></p></section>
+<section data-screen="map"><div class="title"><h1>Mapa terenu</h1><span class="live" id="fixBadge">GPS wyłączony</span></div>
+<div class="mapframe"><div id="fieldMap" aria-label="Mapa telefonu i stanowiska laptopa"></div><button id="recenter" class="mapbutton" aria-label="Wycentruj na telefonie" disabled>◎</button></div>
+<div class="legend"><span><i></i>Telefon</span><span><i class="station"></i>Laptop</span></div>
+<div class="card"><div class="line"><div><small>LOKALIZACJA</small><h2>Twój telefon</h2></div><strong id="accuracy">—</strong></div><p id="status" role="status">Włącz lokalizację, aby zobaczyć swój punkt.</p>
+<button id="start" class="solid">◎ Włącz lokalizację</button><button id="stop" hidden>Zatrzymaj GPS</button></div>
+<details class="card" open><summary>Czujnik Wi-Fi laptopa</summary><p id="radioState" role="status">Oczekiwanie na stan czujnika.</p>
+<div class="inputs"><label>Sieć (SSID)<input id="network" value="AGH-LAB" maxlength="32"></label><label>Strefa<select id="zone"><option value="">Nieustalona</option><option>A</option><option>B</option><option>C</option><option>D</option></select></label></div>
+<label class="check"><input id="anchor" type="checkbox"> Stoję przy laptopie. Przypnij jego stanowisko w tym miejscu.</label><button id="radioStart">Rozpocznij odczyty</button><button id="radioStop" hidden>Zatrzymaj odczyty</button><p id="radioMessage" role="status"></p></details></section>
+<section data-screen="alerts" hidden><div class="title"><h1>Alerty Wi-Fi</h1><span id="alertCount" class="live">—</span></div><div class="card"><small>RAPORTY LAPTOPA</small><div id="liveAlerts" role="status">Oczekiwanie na połączenie.</div></div>
+<details class="card"><summary>Próba AGH-LAB</summary><p>Symulacja nowego punktu OPEN przy wymaganym 802.1X. Dane przykładowe są odseparowane od odczytów laptopa.</p><button id="sample">Uruchom próbę</button><div id="sampleAlert" role="status"></div></details>
+<div class="card"><h2>Plan i oględziny</h2><button id="inspect">Otwórz widok oględzin</button>
+<section id="inspection" hidden><label>Sprawa <select id="incident"></select></label><p id="finding"></p><div id="indoor"><span>A</span><span>B</span><span>D</span><span>C</span></div><label id="targetLabel" hidden>Strefa <select id="target"></select></label><p>Stań pośrodku sali i skieruj telefon na środek ściany między A i B.</p>
+<button id="camera" disabled>Włącz kamerę</button><button id="calibrate" disabled>Kalibruj widok</button><button id="endCamera" hidden>Wyłącz kamerę</button>
+<div id="scene" hidden><video id="video" muted playsinline autoplay></video><strong id="direction"></strong></div><p id="arStatus" role="status"></p></section></div></section>
+</main>
+<nav aria-label="Panel terenowy"><div class="shell"><button data-tab="map" aria-current="page"><b aria-hidden="true">◎</b>Mapa</button><button data-tab="alerts"><b aria-hidden="true">△</b>Alerty</button></div></nav>
+<script src="/vendor/leaflet.js"></script><script src="/phone.js"></script><script src="/inspection-ar.js"></script><script src="/mobile.js"></script></body></html>

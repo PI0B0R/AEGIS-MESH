@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="pl"><head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Demo AGH · Attack Surface Intelligence</title>
+  <link rel="stylesheet" href="/style.css?v=large-map"><link rel="stylesheet" href="/demo.css?v=discovery">
+</head><body>
+<header class="mast"><div class="bar">
+  <a class="brand" href="/"><span class="logo" aria-hidden="true">◇</span>AEGIS<span class="light">MESH</span></a>
+  <nav aria-label="Nawigacja"><a href="/#overview">Przegląd</a><a href="/#measurements">Pomiary</a><a href="/#alerts">Alerty</a><a href="/demo.html" class="active" aria-current="page">Demo AGH</a></nav>
+</div></header>
+<main>
+  <div class="intro"><div><h1>Attack Surface Intelligence</h1><p>Dwa przebiegi na lokalnym hoście testowym. Porównaj usługi HTTP i HTTPS oraz dowody zmiany.</p></div></div>
+  <section class="panel setup" aria-label="Sterowanie pokazem">
+    <div><label for="scenario">Usługa HTTPS w drugim przebiegu</label>
+    <select id="scenario"><option value="changed">Przerwa techniczna · HTTP 503</option><option value="timeout">Opóźniona odpowiedź</option><option value="stable">Bez zmian</option></select></div>
+    <button type="button" class="primary" id="runDemo">Uruchom dwa przebiegi</button>
+  </section>
+  <p id="progress" role="status"></p>
+  <section class="panel"><div class="panel-head"><h2>Zmiany usług</h2></div>
+    <p id="summary" class="aside-foot">Uruchom pokaz lub wczytaj raport z dwóch przebiegów.</p>
+    <div class="table-scroll"><table><thead><tr><th>Usługa</th><th>Pierwszy przebieg</th><th>Drugi przebieg</th><th>Zmiana</th></tr></thead><tbody id="changes"></tbody></table></div>
+  </section>
+  <section class="panel history"><div class="panel-head"><h2>Dowody z odpowiedzi</h2></div>
+    <div class="table-scroll"><table><thead><tr><th>Przebieg</th><th>Usługa</th><th>Czas próby</th><th>Tytuł strony</th><th>Nagłówek Server</th><th>Nazwy ciasteczek</th><th>TLS</th></tr></thead><tbody id="evidence"></tbody></table></div>
+  </section>
+  <section class="panel history setup" aria-label="Pliki raportów">
+    <div><label for="importFile">Wczytaj raport JSON</label><input type="file" id="importFile" accept=".json,application/json"></div>
+    <button type="button" id="download" disabled>Eksportuj raport JSON</button>
+  </section>
+</main><script src="/demo.js?v=discovery" defer></script></body></html>

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#123f37"><title>AEGIS-MESH · Pomiary sieci</title>
+  <link rel="stylesheet" href="/vendor/leaflet.css"><link rel="stylesheet" href="/style.css?v=large-map">
+</head>
+<body>
+<header class="mast"><div class="bar">
+  <a class="brand" href="#overview" aria-label="AEGIS-MESH, przegląd"><span class="logo" aria-hidden="true">◇</span>AEGIS<span class="light">MESH</span></a>
+  <nav aria-label="Nawigacja"><a href="#overview" data-view="overview">Przegląd</a><a href="#measurements" data-view="measurements">Pomiary</a><a href="#alerts" data-view="alerts">Alerty</a><a href="/room.html">Plan sali</a><a href="/demo.html">Demo AGH</a></nav>
+</div></header>
+<main>
+  <div class="intro"><div><div class="eyebrow">AEGIS-MESH <span>/</span> CENTRUM OPERACYJNE</div><h1 id="title">Pomiary sieci</h1><p id="subtitle">Wyniki testów łączności i miejsca ich wykonania.</p></div><div class="measure-actions"><button type="button" id="locateNow" aria-haspopup="dialog">Gdzie jestem?</button><button type="button" class="primary" id="measure"><b>＋</b> Zmierz tutaj</button></div></div>
+  <div id="notice" role="status"></div>
+  <div id="sourceBadge" class="aside-foot" role="status">Brak aktywnej lokalizacji</div>
+  <details id="fixedPanel" class="panel" hidden><summary>Stały skaner laptopa</summary><div class="aside-foot">
+    <label>Obserwowana sieć (SSID) <input id="fixedSsid" maxlength="32" value="AGH-LAB"></label>
+    <button type="button" id="fixedStart">Uruchom na laptopie</button><button type="button" id="fixedStop" hidden>Zatrzymaj odczyty</button>
+    <p id="fixedStatus" role="status"></p></div></details>
+  <details id="phonePanel" class="panel" hidden><summary>Aplikacja telefonu · parowanie i kod QR</summary><div class="aside-foot">
+    <label>Połączenie z telefonem <select id="phoneHost"></select></label>
+    <label><input id="phoneTogether" type="checkbox"> Zezwalam na sparowanie telefonu z tą sesją</label>
+    <button type="button" id="pairPhone">Sparuj telefon</button><button type="button" id="stopPhone" hidden>Rozłącz telefon</button>
+    <p id="tunnelHint" hidden>Tunel HTTPS udostępnia aplikację telefonu. Zakończ go przyciskiem „Rozłącz telefon”.</p><div id="phoneInvite" hidden><canvas id="pairQR" aria-label="Kod QR jednorazowego linku parowania"></canvas><div id="localCert"><p>Przenieś certyfikat na telefon i dodaj go jako zaufany lokalny urząd certyfikacji. Otwórz link na telefonie w tej samej sieci. Link jest ważny przez 2 minuty.</p>
+    <a href="/api/phone/ca" download>Pobierz certyfikat AEGIS</a></div><p>Zeskanuj kod telefonem lub skopiuj link. Zaproszenie online jest ważne przez 15 minut, a w sieci lokalnej przez 2 minuty.</p><p>Jednorazowy PIN do wpisania na telefonie: <strong id="pairPin"></strong></p><label>Link jednorazowy <input readonly id="phoneUrl"></label><button type="button" id="copyPhone">Kopiuj link</button></div>
+    <p id="phoneStatus" role="status"></p></div></details>
+  <div id="sessionBar" class="panel-head panel" hidden><span id="sessionStatus" role="status"></span><button id="confirmStation" type="button" hidden>Potwierdzam stałe stanowisko</button><button id="stopSession" type="button">Zatrzymaj</button></div>
+  <section id="overview">
+    <div class="metrics">
+      <article><span class="metric-icon" aria-hidden="true">⌖</span><div><small>Punkty pomiarowe</small><strong id="pointCount"></strong></div></article>
+      <article><span class="metric-icon" aria-hidden="true">≋</span><div><small>Zapisane pomiary</small><strong id="measureCount"></strong></div></article>
+      <article><span class="metric-icon warm" aria-hidden="true">!</span><div><small>Alerty ze skanów</small><strong id="wifiCount">—</strong></div></article>
+    </div>
+    <div class="layout"><section class="panel map-panel"><div class="panel-head"><h2>Mapa pomiarów</h2><button type="button" id="expandMap" aria-haspopup="dialog">Powiększ mapę</button></div>
+      <div class="legend wifi-legend"><label>Obszar pracy <select id="areaCity" disabled><option>Wczytywanie…</option></select></label><button type="button" id="correctArea" hidden>Skoryguj miejsca pomiarów</button></div>
+      <div id="areaMessage" role="status" class="aside-foot"></div>
+      <div class="map-wrap"><div id="map" aria-label="Mapa zapisanych pomiarów"></div></div>
+      <div class="legend wifi-legend"><span>● Pomiar łączności</span><label><input type="checkbox" id="wifiLayerToggle" checked> Miejsca skanów Wi-Fi</label><label><input type="checkbox" id="unverifiedToggle"> Pokaż historyczne pozycje niezweryfikowane</label><button type="button" id="fitWifi" disabled>Pokaż miejsca skanów</button></div>
+    </section><aside class="panel"><div class="panel-head"><h2>Alerty</h2><a href="#alerts">Import CSV</a></div><div id="wifiPreview"></div></aside></div>
+  </section>
+  <section class="panel history" id="history"><div class="panel-head"><h2 id="historyTitle">Ostatnie pomiary</h2><button class="text-btn" id="allRows">Zobacz wszystkie</button></div>
+    <div class="table-scroll"><table><thead><tr><th>Miejsce pomiaru</th><th>Data i godzina</th><th>Lokalizacja</th><th>Odpowiedź serwera</th></tr></thead><tbody id="rows"></tbody></table></div></section>
+  <details class="panel history" id="wifiHistory" hidden><summary>Sygnały i historia Wi-Fi</summary>
+    <div class="aside-foot"><label for="signalChoice">Rozpoznane sygnały (SSID i BSSID)</label>
+      <select id="signalChoice" style="max-width:100%"></select>
+      <p id="signalEvidence"></p><button type="button" id="markHotspot" hidden></button><p id="signalStatus" role="status"></p>
+    </div>
+    <div class="table-scroll"><table><thead><tr><th>Data i godzina</th><th>Raport i sygnały</th><th>Czujnik</th><th>Lokalizacja pomiaru</th></tr></thead><tbody id="wifiRows"></tbody></table></div></details>
+  <section id="alertPage" hidden>
+    <div class="panel"><div class="panel-head"><h2>Import Wi-Fi</h2><span id="wifiTotals" class="tag">Wczytywanie…</span></div>
+    <div class="wifi-imports">
+      <form data-import="inventory"><h3>1. Inwentarz</h3><p>Wczytaj zatwierdzone punkty i ich zabezpieczenia. Istniejące wpisy o tym samym SSID i BSSID zostaną zaktualizowane.</p>
+        <label>Plik inwentarza CSV <input type="file" accept=".csv,text/csv" required></label>
+        <button type="submit">Wczytaj inwentarz</button>
+        <small>Kolumny CSV: ssid, bssid, zone, expected_security. Obsługiwany jest także dotychczasowy format ssid, bssid, security.</small>
+        <p role="status"></p></form>
+      <form data-import="scan"><h3>2. Skan z laptopa</h3><p>Wczytaj obserwacje z czasem i pozycją czujnika. Każdy odczyt zostanie porównany z aktualnym inwentarzem.</p>
+        <label>Plik skanu CSV <input type="file" accept=".csv,text/csv" required></label>
+        <button type="submit">Porównaj skan</button>
+        <small>Kolumny CSV: ssid, bssid, security, sensor, at, lat, lng</small>
+        <p role="status"></p></form>
+    </div></div>
+    <div class="panel history"><div class="panel-head"><h2>Sprawy z obserwacji Wi-Fi</h2></div><div id="wifiCases"></div></div>
+  </section>
+</main>
+<dialog id="whereDialog" aria-labelledby="whereTitle">
+  <header><h2 id="whereTitle">Moja lokalizacja</h2><button type="button" class="close" aria-label="Zamknij">×</button></header>
+  <p id="whereStatus" role="status"></p>
+  <div id="whereMap" hidden aria-label="Mapa odczytu urządzenia"></div>
+  <footer><button type="button" id="whereRaw" hidden>Obejrzyj odrzucone wskazanie</button><button type="button" id="whereRetry">Odśwież pozycję</button></footer>
+</dialog>
+<dialog id="formDialog"><form id="measurementForm"><header><h2>Nowy pomiar</h2><button type="button" class="close" aria-label="Zamknij">×</button></header>
+  <label for="mode">Rodzaj pomiaru</label> <select id="mode"><option value="single">Jednorazowy test łączności</option><option value="latency">Seria testów łączności</option><option id="radioMode" value="wifi" disabled>Odczyty Wi-Fi laptopa</option></select>
+  <p id="modeHelp"></p><div id="ssidField" hidden><label for="sessionSsid">Twoja sieć (SSID)</label>
+    <input id="sessionSsid" type="text" autocomplete="off" maxlength="32" list="connectedNetworks" aria-describedby="ssidStatus">
+    <datalist id="connectedNetworks"></datalist><button type="button" id="detectSsid">Odczytaj z Windows</button>
+    <p id="ssidStatus" role="status"></p>
+    <label>Stanowisko czujnika na planie sali <select id="sensorZone"><option value="">Strefa nieustalona</option><option value="A">Strefa A</option><option value="B">Strefa B</option><option value="C">Strefa C</option><option value="D">Strefa D</option></select></label></div>
+  <div class="result" id="singleResult"><small>Odpowiedź serwera</small><strong id="probeResult" role="status">Pomiar trwa…</strong></div>
+  <fieldset><legend>Miejsce pomiaru</legend><button type="button" id="geo">Sprawdź wskazanie przeglądarki</button><button type="button" id="pick">Wskaż na mapie</button><button type="button" id="reuseStation" hidden></button>
+    <div id="stationOptions" hidden><label>Stanowisko (budynek, piętro, nazwa) <input id="stationLabel" maxlength="120" placeholder="np. Biblioteka, piętro 1, biurko A"></label>
+    <label><input type="checkbox" id="verifyStation"> Zapisuj diagnostyczne wskazania przeglądarki i porównuj je ze stanowiskiem</label></div>
+    <p id="locationStatus" role="status">Wybierz sposób podania miejsca.</p>
+    <div id="previewMap" hidden style="height:180px" aria-label="Mapa miejsca pierwszego pomiaru"></div>
+    <div id="reviewPlace" hidden>
+      <button type="button" id="acceptPlace">Ustaw tu stałe stanowisko</button>
+      <button type="button" id="skipPlace">Pomiń lokalizację</button>
+    </div>
+    <button type="button" id="keepStation" hidden>Zachowaj wskazane stanowisko</button><button type="button" id="useCandidate" hidden>Sprawdź proponowane stanowisko</button>
+    </fieldset>
+  <p id="saveStatus" role="status"></p><footer><button id="retry" type="button">Powtórz pomiar</button><button class="primary" id="save" disabled>Zapisz na mapie</button></footer></form></dialog>
+<dialog id="wifiDialog"><header><h2 id="wifiTitle"></h2><button class="close" type="button" aria-label="Zamknij">×</button></header><div id="wifiEvidence"></div></dialog>
+<dialog id="correctionDialog"><header><h2>Korekta miejsca pomiarów</h2><button class="close" type="button" aria-label="Zamknij">×</button></header>
+  <p>Wybierz czas, kiedy laptop był na jednym stanowisku. Korekta obejmie zapisane pomiary spoza wybranego obszaru w tym przedziale.</p>
+  <label>Od <input id="correctFrom" type="datetime-local"></label>
+  <label>Do <input id="correctTo" type="datetime-local"></label>
+  <p id="correctSummary" role="status"></p><button type="button" id="correctPick">Wskaż stanowisko na mapie</button>
+  <p id="correctPoint"></p><button type="button" class="primary" id="correctSave" disabled>Zapisz korektę</button>
+</dialog>
+<script src="/vendor/leaflet.js"></script><script src="/campus-map.js?v=pozycja" defer></script><script src="/position.js?v=device-point" defer></script><script src="/app.js?v=device-point" defer></script><script src="/wifi.js?v=signals" defer></script><script src="/session.js?v=first-ping" defer></script><script src="/vendor/qrcode.js" defer></script><script src="/fixed-radio.js" defer></script><script src="/pair.js?v=mobile" defer></script><script src="/area.js" defer></script>
+</body></html>

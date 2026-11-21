@@ -1,0 +1,15 @@
+<!doctype html><html lang="pl"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan sali · AEGIS-MESH</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/room.css">
+<header class="mast"><div class="bar"><a class="brand" href="/">AEGIS MESH</a><nav><a href="/">Pomiary</a><a href="/#alerts">Import CSV</a></nav></div></header>
+<main><div class="intro"><div><h1>Inspekcja sali</h1><p id="mode">Stanowiska czujników i zmiany w sieci Wi-Fi</p></div>
+<button id="simulate" class="primary" hidden>Symuluj nowy punkt OPEN</button></div><p id="message" role="status"></p>
+<div class="room-layout"><section class="panel"><div class="panel-head"><h2>Plan sali</h2></div><div class="inside">
+<p>Ściana odniesienia pomiędzy strefami A i B</p><div id="plan" class="floor"></div><p id="suggestion"></p>
+<h3>Stan czujników</h3><div id="sensors"></div></div></section>
+<section class="panel"><div class="panel-head"><h2>Co się zmieniło?</h2></div><div class="inside">
+<label>Sprawa <select id="choice"></select></label><div id="evidence"></div>
+<form id="review" hidden><label>Wynik oględzin <select id="outcome"></select></label><label>Notatka <textarea maxlength="1000" id="note" rows="3"></textarea></label><button class="primary">Zapisz wynik i zamknij sprawę</button></form>
+<div id="log"></div></div></section></div>
+<details class="panel inside"><summary>Pierwsze obserwacje punktów dostępowych</summary><ul id="changes"></ul></details>
+<details class="panel inside"><summary>Zatwierdzony inwentarz</summary><ul id="inventory"></ul></details>
+</main><script src="/room.js"></script></html>

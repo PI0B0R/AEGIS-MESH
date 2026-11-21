@@ -1,0 +1,59 @@
+AEGIS-MESH — błędna lokalizacja laptopa i odczytów Wi-Fi między Bydgoszczą a Krakowem
+
+Proszę o niezależną ocenę techniczną. Chcę ustalić, co jeszcze można poprawić w działającej aplikacji, jak odróżnić błąd źródła lokalizacji od błędu prezentacji oraz czy mój własny telefon może dostarczać lepszą pozycję. Poniżej podaję rzeczywiste obserwacje, zastosowane poprawki i pytania. Odpowiedz po polsku.
+
+1. W jakich warunkach używam aplikacji
+
+Fizycznie jestem w Bydgoszczy. Laptop z Windows korzysta z internetu przez Ethernet w sieci wydarzenia HackNation2026. Mogę jednocześnie używać jego karty Wi-Fi do odczytu widocznych punktów dostępowych. Mam też telefon, na którym mogę włączyć własny hotspot. Wcześniej testowałem aplikację również na połączeniu przez eduroam.
+
+AEGIS-MESH działa lokalnie na laptopie. Backend to Python z biblioteką standardową, baza to SQLite, frontend to JavaScript, a mapa korzysta z Leaflet i OpenStreetMap. Główna aplikacja zapisuje rzeczywiste pomiary. Osobna zakładka konkursowa AGH pokazuje dwa przebiegi testów usług HTTP/HTTPS. Problem z lokalizacją dotyczy głównej aplikacji.
+
+2. Co rzeczywiście zaobserwowałem
+
+21 listopada 2026 r. laptop pozostawał w Bydgoszczy. W bazie są następujące odczyty ze źródłem „przeglądarka”. Godziny podaję w czasie polskim (UTC+1). Miasto określono przez porównanie współrzędnych z okolicą miasta.
+
+Godzina       Okolica wskazana przez współrzędne     Dokładność podana przez urządzenie
+14:50:24      Kraków                                 95 m
+14:50:53      Bydgoszcz                             465 m
+14:51:23      Kraków                                241 m
+15:04:24      Kraków                                 56 m
+
+W niecałą minutę trzy kolejne odczyty wskazały Kraków, Bydgoszcz i znowu Kraków. W tym przykładzie wybór wyniku z najmniejszym promieniem dokładności dałby błędne miasto. Na mapie widziałem krakowską Małą Halę i skupisko znaczników, mimo że wykonywałem pomiary w Bydgoszczy.
+
+W bazie znaleźliśmy 664 obserwacje Wi-Fi z 52 różnych chwil skanowania ze współrzędnymi w okolicy Krakowa. W jednej chwili skanowania było ich maksymalnie 27. Liczba 664 oznacza wiersze obserwacji, również powtórzenia tych samych punktów dostępowych. Wszystkie odczyty z jednego raportu dostają tę samą pozycję laptopa. Zgodność kilkunastu takich wierszy jest więc skutkiem jednego odczytu lokalizacji. Użycie jej jako kilkunastu niezależnych głosów za Krakowem powieliłoby błąd.
+
+Wcześniej w panelu były także przykładowe stanowiska w Krakowie i trzy odczyty z demonstracyjnych plików CSV. Te przykłady wyłączono z mapy, liczników i alertów użytkownika. Późniejsze skoki występowały również w rzeczywistych pomiarach oznaczonych źródłem „przeglądarka”.
+
+3. Skąd aplikacja bierze dane
+
+• Przeglądarka pobiera pozycję przez navigator.geolocation.getCurrentPosition z enableHighAccuracy=true, maximumAge=0 oraz timeout=10000 ms. Zwraca współrzędne, coords.accuracy i znacznik czasu. API nie podaje aplikacji, czy konkretny wynik pochodził z GNSS, Wi-Fi, adresu IP czy połączenia źródeł.
+• Backend odczytuje nazwę połączonej sieci Wi-Fi przez „netsh wlan show interfaces”. Jeżeli korzystam wyłącznie z kabla, mogę ręcznie wpisać nazwę hotspotu do obserwacji. Sam Ethernet nie dostarcza SSID.
+• Dla odczytu Wi-Fi backend uruchamia „netsh wlan show networks mode=bssid”. Obecny parser zachowuje wybrane SSID, BSSID i sposób zabezpieczenia. Filtruje raport według wpisanej nazwy sieci. Nie zapisuje RSSI w dBm ani kanału. Ten odczyt nie dostarcza listy telefonów działających wyłącznie jako klienci sieci.
+• Seria wykonuje pomiar od razu, później mniej więcej co 30 sekund przy otwartej karcie. Windows może ponownie zwrócić wcześniejszy raport. Zapisujemy czas pobrania raportu, więc kolejne znaczniki czasu nie dowodzą, że karta wykonała nowe skany radiowe.
+• Test łączności mierzy czas żądania HTTP z przeglądarki do serwera aplikacji. Przy lokalnym serwerze wynik dotyczy tej lokalnej ścieżki. Sam czas odpowiedzi nie pomaga ustalić miasta.
+
+4. Co wdrożyliśmy
+
+• Pochodzenie pozycji. Rozróżniamy pozycję z przeglądarki, ręcznie wskazane stanowisko, współrzędne z CSV, brak lokalizacji i historyczne wpisy o nieznanym źródle. Dla odczytu przeglądarki zapisujemy czas pozycji i zgłoszoną dokładność osobno od czasu pomiaru sieciowego. Dokładność gorszą niż 50 m oznaczamy jako orientacyjną. Próg 50 m nie identyfikuje źródła GNSS.
+• Ręczne stanowisko. Wskazuję budynek pinezką i mogę dopisać piętro oraz nazwę stanowiska. Seria korzysta ze stałych współrzędnych. Po włączeniu porównania z urządzeniem rozbieżność pojawia się, gdy odległość od pinezki przekracza 100 m plus dokładność zgłoszoną przez urządzenie. Wynik i rozbieżność można zachować przy ręcznym stanowisku.
+• Pierwsza pozycja automatyczna. Przed rozpoczęciem serii oglądam proponowane miejsce na mapie i je zatwierdzam. Podgląd może wyświetlić pobliskie miasto z dołączonej listy 24 miejscowości. Przybliżenie mapy do miasta i wybranie konkretnego stanowiska to dwie osobne czynności.
+• Ochrona serii. Odległość liczymy od pierwszego zatwierdzonego punktu. Jeżeli kolejny odczyt wypada dalej niż 5 km, zapisujemy wynik sieciowy bez pinezki z powodem „outside_area”. Jeżeli sam punkt mieści się w obszarze, ale odległość plus zgłoszona dokładność przekracza 5 km, powodem jest „uncertain_area”. Po powrocie odczytów do obszaru seria ponownie może zapisywać pinezki.
+• Obszar pracy całej instalacji. Wybraliśmy Bydgoszcz i promień 25 km od centrum. Pierwsza propozycja przeglądarki spoza obszaru jest odrzucana. Przy wyświetlaniu historii backend oznacza zapisy spoza obszaru do weryfikacji i pomija ich pinezki. Surowe dane pozostają w bazie. Wybranie Bydgoszczy jest deklaracją operatora. Nie mierzy współrzędnych laptopa i nie ustawia wszystkich urządzeń w centrum miasta.
+• Korekta historii. Mogę wybrać czas, w którym laptop stał w jednym miejscu, sprawdzić liczbę objętych wpisów, wskazać stanowisko i jawnie zatwierdzić korektę. Backend zapisuje ją osobno od oryginału. Pojedyncze żądanie obejmuje maksymalnie 5000 wpisów. W chwili przygotowania notatki w bazie tej instalacji było 0 zapisanych korekt. Widok Bydgoszczy działa obecnie dzięki filtrowi, a dawne błędne punkty wciąż mają oryginalne współrzędne.
+• Kategorie sygnałów. Aplikacja pokazuje „własny hotspot”, „punkt z inwentarza”, „możliwy hotspot” i „typ nieustalony”. Własny hotspot użytkownik potwierdza dla konkretnej pary SSID+BSSID. Dopasowanie do inwentarza również wymaga tej pary. Słowa takie jak „iPhone”, „Galaxy”, „Pixel” lub „hotspot” w nazwie są jedynie słabą przesłanką. Oznaczenie nie zmienia położenia odczytu ani oceny zabezpieczeń.
+
+5. Co wyjaśniliśmy, a co pozostaje otwarte
+
+Potwierdziliśmy skoki w nowych odczytach przeglądarki oraz mechanizm powielania jednej pozycji na wiele obserwacji Wi-Fi. W testach z symulowanymi pozycjami sprawdziliśmy odrzucenie Krakowa, dalszy zapis wyniku sieciowego, powrót do nanoszenia poprawnych odczytów i zachowanie surowej historii po korekcie.
+
+Nie ustaliliśmy przyczyny błędnego wyniku w usłudze lokalizacji Windows lub przeglądarki. W grę wchodzi m.in. lokalizacja sieciowa, nieaktualne przypisanie punktu Wi-Fi do miasta albo wpływ trasy internetowej. Nie mamy dowodu wskazującego konkretną bazę dostawcy, przeniesiony router ani wyjście do internetu w Krakowie. Testy filtrów potwierdzają zachowanie aplikacji. Same nie dowodzą poprawy fizycznej dokładności laptopa.
+
+Włączenie hotspotu udostępnia sieć. Samo wykrycie go przez laptop potwierdza co najwyżej widoczność rozgłaszanego sygnału. Obecna aplikacja nie otrzymuje w ten sposób pozycji GPS telefonu. Nie wdrożyliśmy jeszcze parowania telefonu jako osobnego źródła lokalizacji, planu pięter, estymacji położenia nadajnika na podstawie RSSI ani WebAR.
+
+6. O co proszę Gemini
+
+1) Zaproponuj krótki test terenowy z laptopem i moim telefonem w tym samym, znanym miejscu w Bydgoszczy. Chcę zostać na Ethernecie i zmieniać po jednym czynniku. Podaj dokładnie, co rejestrować, które wyniki są niezależne i jak odróżnić problem przeglądarki, systemu Windows, pamięci raportu WLAN i przypisania pinezki w aplikacji.
+2) Oceń oddzielnie progi 50 m, 100 m + dokładność, 5 km i 25 km. Które pomagają przy nieruchomym stanowisku, a które przeszkodzą przy przemieszczaniu laptopa? Jak postąpić, jeśli dwa sprzeczne odczyty mają pozornie dobrą dokładność?
+3) Zaproponuj najprostszą architekturę, w której mój telefon za zgodą wysyła świeżą pozycję do jednej sesji laptopa. Uwzględnij HTTPS, parowanie, znaczniki czasu, wiek pozycji, deklarowaną dokładność i warunek, że telefon rzeczywiście jest przy laptopie. Wyjaśnij też, jak aplikacja ma działać, gdy telefon odejdzie lub przestanie raportować.
+4) Zaproponuj osobne reguły zaufania dla rozpoznania własnego hotspotu i dla położenia geograficznego. Jak obsługiwać zmianę BSSID, wspólne SSID i odczyty z pamięci podręcznej? Jak uniknąć przypisywania pozycji telefonu wszystkim wykrytym urządzeniom?
+5) Podaj trzy najważniejsze zmiany w kolejności wdrożenia oraz mierzalny test akceptacyjny dla każdej. Priorytetem jest rzetelna informacja o miejscu wykonania pomiaru w rzeczywistej aplikacji. Dotychczasową historię chcę zachować wraz z jej niepewnością.

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AEGIS Mesh · kody QR na drzwi</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:16px;color:#122b29;background:#fff}
+textarea{width:100%;max-width:520px;height:120px;font:14px monospace}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px;margin-top:16px}
+figure{margin:0;border:1px dashed #999;padding:12px;text-align:center;break-inside:avoid}
+figcaption{font-weight:600;margin-top:6px}small{display:block;color:#555;font-weight:400}
+@media print{.controls{display:none}figure{border-color:#ccc}}
+</style></head><body>
+<div class="controls"><h1>Kody QR z miejscem pomiaru</h1>
+<p>Jedna sala w wierszu: <code>budynek/piętro/sala</code>, np. <code>B1/2/215</code>. Wydrukuj i naklej na drzwi. Aplikacja AEGIS Mesh skanuje kod (Miejsce → QR z drzwi) i dołącza to miejsce do raportów, gdy w budynku nie ma GPS.</p>
+<textarea id="rooms">B1/1/101
+B1/2/215
+C2/0/hol</textarea><p><button id="make">Generuj</button> <button id="print">Drukuj</button></p></div>
+<div id="grid" class="grid"></div>
+<script src="/vendor/qrcode.js"></script><script src="/place-qr.js"></script>
+</body></html>
