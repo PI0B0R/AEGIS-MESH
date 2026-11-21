@@ -71,8 +71,9 @@ class HotColdActivity : Activity() {
             lastStamp = ap.timestamp
             val value = smooth(smoothed, ap.level).also { smoothed = it }
             val shown = Math.round(value).toInt()
-            hint.text = trend(lastShown, shown)
-            hint.ink(when (hint.text) { "Cieplej" -> Palette.GREEN; "Zimniej" -> Palette.RED; else -> Palette.TEXT })
+            val word = trend(lastShown, shown)
+            hint.text = word
+            hint.ink(when (word) { "Cieplej" -> Palette.GREEN; "Zimniej" -> Palette.RED; else -> Palette.TEXT })
             lastShown = shown
             best = maxOf(best ?: ap.level, ap.level)
             level.text = "$shown dBm"
