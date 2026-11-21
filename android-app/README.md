@@ -2,24 +2,24 @@
 
 Telefon jest osobnym czujnikiem. Jego moduł GPS podaje miejsce odbioru sygnału. Laptop nadal może równolegle prowadzić własne pomiary.
 
-## Instalacja i pierwszy pomiar
+## Instalacja i pierwsze połączenie
 
-1. Na laptopie uruchom z katalogu `aegis-web` polecenie `python server.py --mobile-test --port 8772`. Jeżeli ten proces już działa, wystarczy otworzyć [panel parowania](http://127.0.0.1:8772/). Ta instancja zapisuje dane w tymczasowej bazie. Dla trwałej historii uruchom serwer z osobną bazą przez `--db` zamiast `--mobile-test`.
-2. W sekcji **Aplikacja telefonu · parowanie i kod QR** wybierz Cloudflare albo adres sieci LAN. Potwierdź parowanie, wygeneruj zaproszenie i odczytaj URL oraz ośmiocyfrowy PIN. Każda aplikacja wymaga osobnego parowania. Nowe zaproszenie w tej samej instancji zastępuje poprzednią sesję.
-3. Zainstaluj plik APK na Androidzie. Wybierz **Połącz**, potem **Skanuj QR** i zeskanuj kod z panelu laptopa. Możesz też wkleić adres sesji telefonu (może zawierać /phone-beacon), podać świeży PIN i wybrać **Połącz**. Po wymianie jednorazowego PIN-u aplikacja przechowuje w prywatnych preferencjach adres i klucz sesji. Panel WebView korzysta z tej samej sesji.
-4. Włącz w systemie lokalizację i Wi-Fi. Zezwól aplikacji na dokładną lokalizację i dostęp do urządzeń w pobliżu, a następnie wybierz **Uruchom czujnik**. W budynku ustaw najpierw **Miejsce**. Najłatwiej uzyskać pierwszy odczyt GPS na zewnątrz. Telefon zachowuje ostatni przyjęty punkt na mapie z czasem odczytu.
-5. Sprawdź komunikat **HTTP 200**, dokładność i liczbę wysłanych punktów. W panelu laptopa otwórz historię skanów Wi-Fi. Dwa punkty dostępowe z jednej paczki powinny mieć jeden identyfikator pomiaru i wspólną pinezkę czujnika. Zatrzymaj pomiar przyciskiem w aplikacji lub z powiadomienia Androida.
+1. Na laptopie uruchom w katalogu `aegis-web` polecenie `python server.py` i otwórz [panel](http://127.0.0.1:8765). Laptop i telefon muszą być w tej samej sieci Wi-Fi. Przy pierwszym uruchomieniu Windows może zapytać o zaporę: wybierz **Zezwól**.
+2. Na stronie panelu jest karta **Dodaj telefon** z dwoma kodami QR. Kod **Pobierz** zeskanuj aparatem telefonu i zainstaluj APK.
+3. Otwórz aplikację, dotknij **Zeskanuj kod z laptopa** i zeskanuj kod **Połącz**. Zgódź się na lokalizację i powiadomienia. Czujnik włącza się sam, a karta na laptopie pokazuje „Telefon połączony”.
+
+Kod **Połącz** zawiera adres laptopa, jednorazowy token i odcisk SHA-256 certyfikatu laptopa. Aplikacja ufa tylko temu certyfikatowi, więc połączenie jest szyfrowane bez instalowania certyfikatu na telefonie. Laptop sam wybiera adres w sieci lokalnej. Sesja trwa 12 godzin. Drugi telefon dodasz przyciskiem **Dodaj inny telefon** (zastępuje poprzedni). Stare opcje parowania (tunel, PIN, wybór adresu) są w panelu pod **Zaawansowane**.
 
 ## Co robi aplikacja
 
 Telefon jest czujnikiem radiowym, nie skanerem sieci. Widzi punkty dostępowe (SSID, BSSID, siła sygnału, zabezpieczenie), a nie komputery w sieci. Hosty wykrywa skaner na serwerze.
 
 - **Lista sieci w pobliżu.** Każdy punkt ma status: *Podejrzany* (znana nazwa z obcym BSSID i słabszym zabezpieczeniem, czyli możliwy evil twin, albo znany BSSID ze słabszym zabezpieczeniem), *Hotspot* (nazwa typu iPhone, AndroidAP, DIRECT-, MAC lokalnie administrowany), *Nowy* (brak na liście znanych) i *Znany*. Logika jest w `Radio.kt` i ma testy w `app/src/test`.
-- **Znane routery.** Przycisk wczytuje plik CSV `ssid,bssid,security`, ten sam format co `aegis-web/static/examples/inventory.csv`.
+- **Znane routery.** Aplikacja pobiera je z inwentarza laptopa po połączeniu i przy każdym starcie czujnika. Można też wczytać plik CSV `ssid,bssid,security` (⋯ Więcej).
 - **Czujnik w tle.** Usługa pierwszoplanowa co 30 s prosi Androida o skan (system pozwala na około 4 skany na 2 minuty), wysyła tylko nowe wyniki i pokazuje powiadomienie o każdym nowym podejrzanym punkcie lub hotspocie. Każda instalacja ma własny identyfikator `PHONE-XXXXXXXX`.
 - **Miejsce.** W budynku GPS rzadko daje dokładność do 50 m. Wtedy raport dostaje budynek, piętro i salę wpisane ręcznie albo odczytane z kodu QR na drzwiach. Kody do druku generuje strona `/place-qr.html` serwera (treść kodu: `aegis-place:B1/2/215`). Przy dobrym GPS wysyłane są współrzędne i dodatkowo miejsce.
 - **Radar i ciepło-zimno.** Ekran główny ma czarno-złoty radar: każdy router to ping, im bliżej środka, tym silniejszy sygnał (kąt tylko rozsuwa pingi, Wi-Fi nie podaje kierunku). Dotknięcie pinga albo wiersza listy otwiera stożek ciepło-zimno: daleko jest szeroki i czerwony, blisko wąski i zielony. Siła sygnału jest wygładzana, bo pojedyncze odczyty skaczą o kilka dB. Dotknięcie pinga na górze stożka włącza tryb szybki (skan co 2 s). Android pozwala aplikacji na 4 skany w 2 minuty, więc żeby odczyt naprawdę przychodził co 2 s, wyłącz w opcjach programisty „Ograniczanie skanowania Wi-Fi”.
-- **Panel laptopa.** Mapa i alerty z serwera są w widoku WebView pod przyciskiem „Panel laptopa”.
+- **Panel laptopa.** Mapa i alerty z serwera są w widoku WebView w menu ⋯ Więcej → Panel laptopa.
 
 ## Zasady pomiaru
 

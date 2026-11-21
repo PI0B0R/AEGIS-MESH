@@ -1,4 +1,5 @@
 """Local, short-lived pairing. Only the beacon page and its two POSTs are served on LAN."""
+import hashlib
 import ipaddress
 import json
 import math
@@ -41,15 +42,20 @@ def meters(a, b):
 
 
 class Phone:
-    def __init__(self, url):
+    def __init__(self, url, fingerprint=None):
         self.url = url
+        self.fingerprint = fingerprint
+        self.lifetime = 3600
+        self.seen = None
         self.lock = threading.RLock()
         self.session = self.invite = self.key = None
         self.last = None
         self.reason = None
 
-    def start(self, invite_seconds=120):
+    def start(self, invite_seconds=120, lifetime=3600):
         with self.lock:
+            self.lifetime = lifetime
+            self.seen = None
             self.session = secrets.token_urlsafe(18)
             self.invite = secrets.token_urlsafe(32)
             self.pin = f"{secrets.randbelow(100_000_000):08d}"
@@ -86,7 +92,7 @@ class Phone:
             return {"key": self.key}
 
     def authorize(self, key):
-        if not self.key or not secrets.compare_digest(self.key,key) or time.monotonic()-self.started>3600:
+        if not self.key or not secrets.compare_digest(self.key,key) or time.monotonic()-self.started>self.lifetime:
             raise ValueError("Sesja telefonu wygasła.")
 
     def receive(self, key, data, city, reject=None, field=False):
@@ -132,7 +138,7 @@ class Phone:
     def status(self, session):
         with self.lock:
             empty = {"location":{"source":"none","reason":"phone_unavailable"}}
-            if not session or session != self.session or time.monotonic()-self.started > 3600:
+            if not session or session != self.session or time.monotonic()-self.started > self.lifetime:
                 return empty
             if not self.last:
                 return dict(empty, paired=bool(self.key), reason=self.reason)
@@ -236,10 +242,18 @@ class Beacon(BaseHTTPRequestHandler):
                         if issued:
                             phone.invite, phone.pin, phone.key = original_invite, original_pin, None
                         raise
+                    phone.seen = time.time()
                     if "location" in result:
                         phone.apk_fix = result["location"]
                     if issued:
                         result["key"] = issued
+            elif self.path == "/known":
+                # Known routers for the phone's offline alerts, straight from the laptop inventory.
+                with self.server.phone.lock:
+                    self.server.phone.authorize(self.headers.get("Authorization","").removeprefix("Bearer "))
+                with closing(sqlite3.connect(self.server.database)) as db:
+                    rows = db.execute("SELECT ssid,bssid,security FROM live_wifi_inventory ORDER BY ssid,bssid").fetchall()
+                result = {"routers": [{"ssid": a or "", "bssid": b, "security": c} for a, b, c in rows]}
             elif self.path == "/detach":
                 result = self.server.phone.detach(self.headers.get("Authorization","").removeprefix("Bearer "))
             elif self.path in ("/inspection","/alerts"):
@@ -288,7 +302,11 @@ def listen(host, port, database, cleartext=False):
     server.database = database
     server.console=MobileConsole(database)
     scheme = "http" if cleartext else "https"
-    server.phone = Phone(f"{scheme}://{host}:{server.server_port}")
+    fingerprint = None
+    if not cleartext:
+        der = ssl.PEM_cert_to_DER_cert(Path(leaf).read_text(encoding="ascii"))
+        fingerprint = hashlib.sha256(der).hexdigest()
+    server.phone = Phone(f"{scheme}://{host}:{server.server_port}", fingerprint)
     if not cleartext:
         server.socket = context.wrap_socket(server.socket,server_side=True)
     threading.Thread(target=server.serve_forever,daemon=True).start()

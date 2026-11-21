@@ -508,3 +508,27 @@ details.panel summary {padding:15px 20px;cursor:pointer}
 
 .measure-actions {display:flex; flex-wrap:wrap; gap:.5rem; align-items:center}
 #whereMap {height:clamp(200px,43vh,420px)}
+
+/* "Dodaj telefon" card: black and gold, the app's colours. */
+.quick{display:flex;flex-wrap:wrap;gap:20px;align-items:center;margin:16px 0;padding:20px;border-radius:16px;
+  background:#0a0a0a;color:#f0e6c8;border:2px solid #d4af37}
+.quick[hidden]{display:none}
+.quick .quick-text{flex:1 1 280px}
+.quick-eyebrow{color:#d4af37;font-size:12px;letter-spacing:.2em;font-weight:700}
+.quick h2{margin:4px 0 8px;color:#d4af37;font-size:28px}
+.quick ol{margin:0 0 10px;padding-left:20px}
+.quick b{color:#d4af37}
+.quick figure{margin:0;text-align:center}
+.quick figure[hidden]{display:none}
+.quick canvas{display:block;width:200px;height:200px;border-radius:10px;border:3px solid #d4af37;image-rendering:pixelated}
+.quick figure:last-of-type canvas{width:120px;height:120px}
+.quick figcaption{margin-top:6px;color:#d4af37;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
+.quick[data-state="paired"] #quickStatus{color:#43d66e;font-weight:700}
+.quick button{background:#d4af37;color:#0a0a0a;border-color:#d4af37}
+.advanced{margin:12px 0}
+.advanced>summary{cursor:pointer;color:var(--muted);font-weight:600}
+/* Black-gold header to match the phone app. */
+.mast{background:#0a0a0a;border-bottom:2px solid #d4af37}
+.logo{background:#d4af37;color:#0a0a0a}
+.bar nav a.active:after{background:#d4af37}
+.brand .light{color:#d4af37}

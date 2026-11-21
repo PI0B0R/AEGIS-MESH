@@ -13,7 +13,17 @@
 <main>
   <div class="intro"><div><div class="eyebrow">AEGIS-MESH <span>/</span> CENTRUM OPERACYJNE</div><h1 id="title">Pomiary sieci</h1><p id="subtitle">Wyniki testów łączności i miejsca ich wykonania.</p></div><div class="measure-actions"><button type="button" id="locateNow" aria-haspopup="dialog">Gdzie jestem?</button><button type="button" class="primary" id="measure"><b>＋</b> Zmierz tutaj</button></div></div>
   <div id="notice" role="status"></div>
+  <section id="quickPhone" class="quick" hidden aria-labelledby="quickTitle">
+    <div class="quick-text"><div class="quick-eyebrow">◆ TELEFON JAKO CZUJNIK</div><h2 id="quickTitle">Dodaj telefon</h2>
+      <ol><li>Zainstaluj aplikację AEGIS Mesh. Zeskanuj złoty kod <b>Pobierz</b> aparatem telefonu.</li>
+        <li>Otwórz aplikację i dotknij <b>Zeskanuj kod z laptopa</b>.</li>
+        <li>Zeskanuj kod <b>Połącz</b>. Czujnik włączy się sam.</li></ol>
+      <p id="quickStatus" role="status">Przygotowuję kod…</p><button type="button" id="quickNew" hidden>Dodaj inny telefon</button></div>
+    <figure><canvas id="quickQR" aria-label="Kod QR do połączenia telefonu"></canvas><figcaption>Połącz</figcaption></figure>
+    <figure><canvas id="apkQR" aria-label="Kod QR do pobrania aplikacji"></canvas><figcaption>Pobierz</figcaption></figure>
+  </section>
   <div id="sourceBadge" class="aside-foot" role="status">Brak aktywnej lokalizacji</div>
+  <details class="advanced"><summary>Zaawansowane</summary>
   <details id="fixedPanel" class="panel" hidden><summary>Stały skaner laptopa</summary><div class="aside-foot">
     <label>Obserwowana sieć (SSID) <input id="fixedSsid" maxlength="32" value="AGH-LAB"></label>
     <button type="button" id="fixedStart">Uruchom na laptopie</button><button type="button" id="fixedStop" hidden>Zatrzymaj odczyty</button>
@@ -25,6 +35,7 @@
     <p id="tunnelHint" hidden>Tunel HTTPS udostępnia aplikację telefonu. Zakończ go przyciskiem „Rozłącz telefon”.</p><div id="phoneInvite" hidden><canvas id="pairQR" aria-label="Kod QR jednorazowego linku parowania"></canvas><div id="localCert"><p>Przenieś certyfikat na telefon i dodaj go jako zaufany lokalny urząd certyfikacji. Otwórz link na telefonie w tej samej sieci. Link jest ważny przez 2 minuty.</p>
     <a href="/api/phone/ca" download>Pobierz certyfikat AEGIS</a></div><p>Zeskanuj kod telefonem lub skopiuj link. Zaproszenie online jest ważne przez 15 minut, a w sieci lokalnej przez 2 minuty.</p><p>Jednorazowy PIN do wpisania na telefonie: <strong id="pairPin"></strong></p><label>Link jednorazowy <input readonly id="phoneUrl"></label><button type="button" id="copyPhone">Kopiuj link</button></div>
     <p id="phoneStatus" role="status"></p></div></details>
+  </details>
   <div id="sessionBar" class="panel-head panel" hidden><span id="sessionStatus" role="status"></span><button id="confirmStation" type="button" hidden>Potwierdzam stałe stanowisko</button><button id="stopSession" type="button">Zatrzymaj</button></div>
   <section id="overview">
     <div class="metrics">
@@ -98,5 +109,5 @@
   <p id="correctSummary" role="status"></p><button type="button" id="correctPick">Wskaż stanowisko na mapie</button>
   <p id="correctPoint"></p><button type="button" class="primary" id="correctSave" disabled>Zapisz korektę</button>
 </dialog>
-<script src="/vendor/leaflet.js"></script><script src="/campus-map.js?v=pozycja" defer></script><script src="/position.js?v=device-point" defer></script><script src="/app.js?v=device-point" defer></script><script src="/wifi.js?v=signals" defer></script><script src="/session.js?v=first-ping" defer></script><script src="/vendor/qrcode.js" defer></script><script src="/fixed-radio.js" defer></script><script src="/pair.js?v=mobile" defer></script><script src="/area.js" defer></script>
+<script src="/vendor/leaflet.js"></script><script src="/campus-map.js?v=pozycja" defer></script><script src="/position.js?v=device-point" defer></script><script src="/app.js?v=device-point" defer></script><script src="/wifi.js?v=signals" defer></script><script src="/session.js?v=first-ping" defer></script><script src="/vendor/qrcode.js" defer></script><script src="/quick.js?v=1" defer></script><script src="/fixed-radio.js" defer></script><script src="/pair.js?v=mobile" defer></script><script src="/area.js" defer></script>
 </body></html>
