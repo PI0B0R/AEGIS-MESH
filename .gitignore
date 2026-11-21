@@ -15,3 +15,4 @@ android-app/local.properties
 *.keystore
 *.jks
 .idea/
+!android-app/app/aegis-debug.keystore
