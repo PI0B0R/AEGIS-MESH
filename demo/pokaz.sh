@@ -56,6 +56,21 @@ print(f"{user} ({method} {path}) -> HTTP {status}: {json.dumps(data, ensure_asci
 PY
 }
 
+# Which admin password the panel takes. Checked against the stored hash, not by logging in,
+# so a wrong guess never counts towards the account lock.
+admin_hint() {
+  if AEGIS_CHECK="$AEGIS_ADMIN_PASSWORD" docker compose exec -T -w / -e AEGIS_CHECK aegis python -c '
+import os, sqlite3, sys
+from aegis.auth import verify_password
+row = sqlite3.connect("/data/aegis.sqlite3").execute("SELECT password_hash FROM users WHERE username=?", ("admin",)).fetchone()
+sys.exit(0 if row and verify_password(os.environ["AEGIS_CHECK"], row[0]) else 1)' >/dev/null 2>&1; then
+    say "Panel: http://127.0.0.1:8000  (login: admin, hasło: $AEGIS_ADMIN_PASSWORD)"
+  else
+    say "Panel: http://127.0.0.1:8000  (login: admin, hasło ustawione przy pierwszym starcie serwera:"
+    say "  wartość AEGIS_ADMIN_PASSWORD z tamtej chwili albo: docker compose exec aegis cat /data/admin-password.txt)"
+  fi
+}
+
 if [ "$FRESH" = 1 ]; then
   step "Od zera"
   read -r -p "Usunąć dane serwera AEGIS (wolumeny aegis-data i aegis-keys)? [t/N] " ok
@@ -70,7 +85,7 @@ run docker compose "${PROFILES[@]}" up -d ${BUILD:---build}
 docker compose start staging >/dev/null 2>&1 || true
 docker compose --profile zmiana stop nowy-serwer >/dev/null 2>&1 || true
 for _ in $(seq 1 60); do aegis summary >/dev/null 2>&1 && break; sleep 2; done
-say "Panel: http://127.0.0.1:8000  (admin / \$AEGIS_ADMIN_PASSWORD, przy pierwszym starcie: $AEGIS_ADMIN_PASSWORD)"
+admin_hint
 say "API i dokumentacja: http://127.0.0.1:8000/docs"
 wait_key
 
@@ -153,4 +168,5 @@ say "Od teraz skan rusza sam w oknie 22:00-06:00; niedokończony wznawia się na
 aegis schedule list | grep -q "Codziennie w nocy" || run aegis schedule add nocny
 run aegis schedule list
 run aegis summary
-say "Panel: http://127.0.0.1:8000. Sieć testowa zostaje uruchomiona; zatrzymanie: docker compose --profile dojo --profile zmiana down"
+admin_hint
+say "Sieć testowa zostaje uruchomiona; zatrzymanie: docker compose --profile dojo --profile zmiana down"
