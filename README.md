@@ -13,7 +13,7 @@ Wi-Fi, który wykrywa obce punkty dostępowe i evil twin sieci organizacji.
 Wszystko działa lokalnie w Dockerze, na darmowych narzędziach open source, bez chmury i bez AI:
 każdą decyzję systemu da się wyjaśnić konkretną regułą lub sygnaturą.
 
-![Pulpit panelu](docs/img/pulpit.png)
+
 
 ## Serwer demonstracyjny dla jury
 
