@@ -116,8 +116,10 @@ internal class TileList(private val host: MainActivity) {
         Kind.CHANGES -> row(context, o.optInt("priority"), o.optString("message"), o.optString("ip")).apply {
             o.text("ip")?.let { ip -> setOnClickListener { showHost(host, ip) } }
         }
-        Kind.PRIORITY -> row(context, o.optInt("priority"), o.optString("title"), "${findingPlace(o)} · ${o.optString("status")}").apply {
-            setOnClickListener { showFinding(context, o) { ip -> showHost(host, ip) } }
+        Kind.PRIORITY -> {
+            val sub = (listOf("${findingPlace(o)} · ${o.optString("status")}") + listOfNotNull(techList(o).takeIf { it.isNotEmpty() }) +
+                reasonList(o).take(1).map { "• $it" }).joinToString("\n")
+            row(context, o.optInt("priority"), o.optString("title"), sub).apply { setOnClickListener { showHost(host, o.optString("ip"), focus = o) } }
         }
     }
 
