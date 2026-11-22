@@ -35,9 +35,10 @@ PERMISSIONS = {
         "/api/auth/me", "/api/targets", "/api/scans", "/api/scans/estimate", "/api/scans/{run_id}", "/api/hosts",
         "/api/hosts/unstable", "/api/hosts/{ip}", "/api/inventory", "/api/summary", "/api/changes",
         "/api/changes/history", "/api/findings", "/api/findings/{finding_id}", "/api/signatures",
-        "/api/schedules", "/api/schedules/templates", "/api/export/findings", "/api/wifi/known")},
+        "/api/schedules", "/api/schedules/templates", "/api/export/findings", "/api/wifi/known", "/api/agents")},
     ("POST", "/api/auth/logout"): "czytelnik",
     ("POST", "/api/auth/password"): "czytelnik",
+    ("POST", "/api/agents/register"): "czytelnik",   # every logged-in phone says which install it is
     # findings
     ("PATCH", "/api/findings/{finding_id}"): "analityk",
     ("POST", "/api/findings/{finding_id}/reset"): "analityk",
@@ -72,6 +73,7 @@ PERMISSIONS = {
     ("PATCH", "/api/users/{user_id}"): "admin",
     ("DELETE", "/api/users/{user_id}"): "admin",
     ("GET", "/api/audit"): "admin",
+    ("PATCH", "/api/agents/{agent_id}"): "admin",
     ("GET", "/api/export/full"): "admin",
     ("POST", "/api/import/full"): "admin",
 }

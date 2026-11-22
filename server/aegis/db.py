@@ -1,6 +1,7 @@
 """SQLite storage. One connection per thread; WAL lets the API read while a scan writes."""
 import json
 import sqlite3
+import uuid
 from datetime import datetime, timezone
 
 SCHEMA = """
@@ -13,7 +14,7 @@ CREATE TABLE IF NOT EXISTS scan_runs (
     created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT, total_hosts INTEGER NOT NULL,
     calibrated INTEGER NOT NULL DEFAULT 0, chunk_size INTEGER NOT NULL, rate INTEGER NOT NULL,
     hosts_up INTEGER NOT NULL DEFAULT 0, active_seconds REAL NOT NULL DEFAULT 0,
-    estimate_seconds REAL, pauses INTEGER NOT NULL DEFAULT 0, error TEXT);
+    estimate_seconds REAL, pauses INTEGER NOT NULL DEFAULT 0, error TEXT, uid TEXT, agent_id TEXT);
 CREATE TABLE IF NOT EXISTS scan_chunks (
     id INTEGER PRIMARY KEY, run_id INTEGER NOT NULL REFERENCES scan_runs(id) ON DELETE CASCADE,
     idx INTEGER NOT NULL, targets TEXT NOT NULL, size INTEGER NOT NULL, status TEXT NOT NULL,
@@ -40,7 +41,7 @@ CREATE TABLE IF NOT EXISTS findings (
     tags TEXT NOT NULL DEFAULT '[]', priority INTEGER NOT NULL DEFAULT 1, title TEXT NOT NULL, reasons TEXT NOT NULL DEFAULT '[]',
     note TEXT, status TEXT NOT NULL DEFAULT 'nowe', edited TEXT NOT NULL DEFAULT '[]', edited_at TEXT,
     first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, first_run_id INTEGER, last_run_id INTEGER,
-    dojo_id INTEGER, dojo_sent_at TEXT, UNIQUE (ip, port, proto));
+    dojo_id INTEGER, dojo_sent_at TEXT, uid TEXT, agent_id TEXT, UNIQUE (ip, port, proto));
 CREATE TABLE IF NOT EXISTS changes (
     id INTEGER PRIMARY KEY, run_id INTEGER NOT NULL REFERENCES scan_runs(id) ON DELETE CASCADE, kind TEXT NOT NULL,
     ip TEXT NOT NULL, port INTEGER, proto TEXT, priority INTEGER NOT NULL, message TEXT NOT NULL, detail TEXT,
@@ -68,7 +69,29 @@ CREATE TABLE IF NOT EXISTS schedules (
 CREATE TABLE IF NOT EXISTS wifi_known (
     bssid TEXT PRIMARY KEY, ssid TEXT NOT NULL DEFAULT '', security TEXT, frequency INTEGER, rssi INTEGER,
     lat REAL, lon REAL, radius REAL, note TEXT, added_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-    last_seen TEXT, missed INTEGER NOT NULL DEFAULT 0);
+    last_seen TEXT, missed INTEGER NOT NULL DEFAULT 0, agent_id TEXT);
+CREATE TABLE IF NOT EXISTS agents (
+    id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0,
+    registered_by TEXT, created_at TEXT NOT NULL, last_seen TEXT);
+CREATE UNIQUE INDEX IF NOT EXISTS findings_uid ON findings(uid);
+"""
+
+# A random UUID (version 4) in SQL, so every way of inserting a row gets one.
+UUID_SQL = ("lower(printf('%s-%s-4%s-%s%s-%s', hex(randomblob(4)), hex(randomblob(2)), substr(hex(randomblob(2)), 2), "
+            "substr('89ab', 1 + abs(random()) % 4, 1), substr(hex(randomblob(2)), 2), hex(randomblob(6))))")
+SCANNER_AGENT_SQL = "(SELECT json_extract(value, '$') FROM settings WHERE key='scanner_agent_id')"
+
+# Unique ids: every finding and every scan gets a UUID and the id of the agent that produced it
+# (a phone or the server's scanner). Rows without them get them when they are inserted; a Wi-Fi flag from a phone
+# that sent no agent id keeps none rather than being credited to the scanner.
+TRIGGERS = f"""
+CREATE TRIGGER IF NOT EXISTS findings_ids AFTER INSERT ON findings WHEN NEW.uid IS NULL OR NEW.agent_id IS NULL BEGIN
+    UPDATE findings SET uid=COALESCE(uid, {UUID_SQL}),
+        agent_id=COALESCE(agent_id, CASE WHEN NEW.proto LIKE 'wifi%' THEN NULL ELSE {SCANNER_AGENT_SQL} END) WHERE id=NEW.id;
+END;
+CREATE TRIGGER IF NOT EXISTS scan_runs_ids AFTER INSERT ON scan_runs WHEN NEW.uid IS NULL OR NEW.agent_id IS NULL BEGIN
+    UPDATE scan_runs SET uid=COALESCE(uid, {UUID_SQL}), agent_id=COALESCE(agent_id, {SCANNER_AGENT_SQL}) WHERE id=NEW.id;
+END;
 """
 
 # Columns sealed by FieldCipher. Banners reveal exact software versions, notes are free text.
@@ -88,6 +111,11 @@ MIGRATIONS = [
     ("hosts", "state", "TEXT NOT NULL DEFAULT 'active'"),
     ("hosts", "missed", "INTEGER NOT NULL DEFAULT 0"),
     ("hosts", "daypart", "TEXT"),
+    ("findings", "uid", "TEXT"),
+    ("findings", "agent_id", "TEXT"),
+    ("scan_runs", "uid", "TEXT"),
+    ("scan_runs", "agent_id", "TEXT"),
+    ("wifi_known", "agent_id", "TEXT"),
 ]
 
 DEFAULT_SETTINGS = {
@@ -113,6 +141,7 @@ DEFAULT_SETTINGS = {
     "dojo_min_priority": 4,
     "bgp_asn": None,             # scope radar: the ASN whose BGP prefixes are compared with the targets
     "bgp_last": None,            # last good RIPEstat answer {asn, prefixes, fetched_at}, used when offline
+    "scanner_agent_id": None,    # this server's own scanner as an agent (created on the first start)
 }
 
 
@@ -143,6 +172,16 @@ def initialize(path: str) -> None:
         db.executescript(SCHEMA)
         for key, value in DEFAULT_SETTINGS.items():
             db.execute("INSERT OR IGNORE INTO settings VALUES (?, ?)", (key, json.dumps(value)))
+        if not settings(db).get("scanner_agent_id"):
+            agent = str(uuid.uuid4())
+            db.execute("INSERT INTO agents (id, kind, name, created_at) VALUES (?, 'skaner', 'Skaner serwera', ?)", (agent, now()))
+            save_setting(db, "scanner_agent_id", agent)
+        db.executescript(TRIGGERS)
+        # older rows: give them ids once
+        for table in ("findings", "scan_runs"):
+            db.execute(f"UPDATE {table} SET uid={UUID_SQL} WHERE uid IS NULL")
+            db.execute(f"UPDATE {table} SET agent_id={SCANNER_AGENT_SQL} WHERE agent_id IS NULL"
+                       + (" AND proto NOT LIKE 'wifi%'" if table == "findings" else ""))
     finally:
         db.close()
 

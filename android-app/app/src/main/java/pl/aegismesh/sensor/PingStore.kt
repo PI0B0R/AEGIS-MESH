@@ -11,7 +11,11 @@ internal object PingStore {
     fun load(context: Context): MutableList<Ping> {
         val f = file(context)
         if (!f.exists()) return mutableListOf()
-        return f.readLines().drop(1).mapNotNull(::parsePing).takeLast(LIMIT).toMutableList()
+        val lines = f.readLines()
+        val pings = lines.drop(1).mapNotNull(::parsePing).takeLast(LIMIT).toMutableList()
+        // a file from before ping ids: write it again with the new columns, so the export has them too
+        if (lines.firstOrNull() != PING_HEADER) f.writeText(PING_HEADER + "\n" + pings.joinToString("") { pingLine(it) + "\n" })
+        return pings
     }
 
     fun append(context: Context, pings: List<Ping>) {

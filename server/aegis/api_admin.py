@@ -265,14 +265,17 @@ def register(app: FastAPI, conn, cipher) -> None:
                     auto = f.get("auto") or {k: f.get(k) for k in ("technologies", "tags", "priority", "title", "reasons")}
                     finding_id = db.execute(
                         "INSERT INTO findings (ip, port, proto, state, auto, technologies, tags, priority, title, reasons, "
-                        "status, edited, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)",
+                        "status, edited, first_seen, last_seen, uid, agent_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?)",
                         (f["ip"], f["port"], f["proto"], f.get("state", "active"),
                          cipher.seal(json.dumps(auto), "findings.auto"),
                          cipher.seal(json.dumps(f.get("technologies", [])), "findings.technologies"),
                          json.dumps(f.get("tags", [])), int(f.get("priority", 1)),
                          cipher.seal(f.get("title") or "Usługa.", "findings.title"),
                          cipher.seal(json.dumps(f.get("reasons", [])), "findings.reasons"), "nowe",
-                         f.get("first_seen") or store.now(), f.get("last_seen") or store.now())).lastrowid
+                         f.get("first_seen") or store.now(), f.get("last_seen") or store.now(),
+                         # keep the finding's unique id from the old server, unless it is already taken here
+                         None if not f.get("uid") or db.execute("SELECT 1 FROM findings WHERE uid=?", (f["uid"],)).fetchone()
+                         else f["uid"], f.get("agent_id"))).lastrowid
                 else:
                     finding_id = row["id"]
                 edits = {k: f[k] for k in f.get("edited", []) if k in F.EDITABLE and f.get(k) is not None}
