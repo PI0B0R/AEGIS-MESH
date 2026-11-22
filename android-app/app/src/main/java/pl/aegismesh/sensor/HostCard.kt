@@ -28,7 +28,7 @@ internal fun serviceLabel(s: JSONObject): String =
 internal fun showFinding(context: android.content.Context, f: JSONObject, openHost: ((String) -> Unit)? = null) {
     val tech = f.optJSONArray("technologies").objects()
         .joinToString(", ") { t -> listOfNotNull(t.text("name"), t.text("version")).joinToString(" ") }
-    val reasons = f.optJSONArray("reasons").objects().joinToString("\n") { "• " + it.optString("message") }
+    val reasons = reasonList(f).joinToString("\n") { "• $it" }
     val text = listOfNotNull(findingPlace(f), "Status: ${f.optString("status")}",
         tech.takeIf { it.isNotEmpty() }?.let { "Technologie: $it" }, reasons.takeIf { it.isNotEmpty() }?.let { "Dlaczego:\n$it" },
         f.text("note")?.let { "Notatka: $it" }).joinToString("\n\n")
@@ -41,11 +41,13 @@ internal fun showFinding(context: android.content.Context, f: JSONObject, openHo
 internal fun techList(f: JSONObject): String = f.optJSONArray("technologies").objects()
     .joinToString(", ") { t -> listOfNotNull(t.text("name"), t.text("version")).joinToString(" ") }
 
-internal fun reasonList(f: JSONObject): List<String> = f.optJSONArray("reasons").objects().mapNotNull { it.text("message") }
+/** Why a finding has its priority: each reason once, without the one that only repeats the title. */
+internal fun reasonList(f: JSONObject): List<String> = f.optJSONArray("reasons").objects().mapNotNull { it.text("message")?.trim() }
+    .distinct().filter { it != f.optString("title").trim() }
 
 /**
  * The host card: state, services with versions and web details, findings with their reasons, recent changes.
- * With [focus] (a finding), the card opens with that finding on top: why it has its priority.
+ * With [focus] (a finding), the card scrolls to that finding and marks it with a gold edge.
  */
 internal fun showHost(host: MainActivity, ip: String, focus: JSONObject? = null) {
     host.say("Wczytuję hosta $ip…")
@@ -65,22 +67,6 @@ private fun hostDialog(host: MainActivity, card: JSONObject, focus: JSONObject?)
     })
     fun section(title: String) = body.addView(heading(context, title).apply { setPadding(0, 24, 0, 8) })
 
-    focus?.let { f ->
-        val p = f.optInt("priority")
-        body.addView(LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL; background = panelBackground(priorityColor(p)); setPadding(32, 24, 32, 24)
-            addView(TextView(context).apply { text = "PRIORYTET $p"; textSize = 13f; letterSpacing = 0.15f; setTypeface(typeface, Typeface.BOLD); ink(priorityColor(p)) })
-            addView(TextView(context).apply { text = f.optString("title"); textSize = 18f; setTypeface(typeface, Typeface.BOLD); ink(); setPadding(0, 6, 0, 6) })
-            addView(TextView(context).apply { text = "${f.optInt("port")}/${f.optString("proto")} · status: ${f.optString("status")}"; textSize = 13f; ink(Palette.MUTED) })
-            techList(f).takeIf { it.isNotEmpty() }?.let { t -> addView(TextView(context).apply { text = "Technologie: $t"; textSize = 14f; ink(); setPadding(0, 8, 0, 0) }) }
-            val why = reasonList(f)
-            if (why.isNotEmpty()) {
-                addView(TextView(context).apply { text = "DLACZEGO"; textSize = 12f; letterSpacing = 0.15f; ink(Palette.GOLD); setPadding(0, 14, 0, 4) })
-                why.forEach { r -> addView(TextView(context).apply { text = "• $r"; textSize = 15f; ink(); setPadding(0, 2, 0, 2) }) }
-            }
-            f.text("note")?.let { n -> addView(TextView(context).apply { text = "Notatka: $n"; textSize = 13f; ink(Palette.MUTED); setPadding(0, 8, 0, 0) }) }
-        }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = 16 })
-    }
     card.text("hostname")?.let { line(it, Palette.GOLD, 16f, bold = true) }
     line("Stan: ${hostState(card.optString("state"))}", if (card.optString("state") == "active") Palette.GREEN else Palette.ORANGE, bold = true)
     line("Pierwszy raz: ${clock(card.text("first_seen"))} · ostatnio: ${clock(card.text("last_seen"))}", Palette.MUTED, 13f)
@@ -105,13 +91,14 @@ private fun hostDialog(host: MainActivity, card: JSONObject, focus: JSONObject?)
     }
 
     val findings = card.optJSONArray("findings").objects().filter { it.optString("state") == "active" }
+    var target: android.view.View? = null
     section("Znaleziska (${findings.size})")
     if (findings.isEmpty()) line("Brak znalezisk.", Palette.MUTED)
     findings.forEach { f ->
         val sub = (listOf("${f.optInt("port")}/${f.optString("proto")} · ${f.optString("status")}") +
             listOfNotNull(techList(f).takeIf { it.isNotEmpty() }) + reasonList(f).map { "• $it" }).joinToString("\n")
         body.addView(row(context, f.optInt("priority"), f.optString("title"), sub).apply {
-            if (focus != null && f.optInt("id") == focus.optInt("id")) background = panelBackground(Palette.GOLD)
+            if (focus != null && f.optInt("id") == focus.optInt("id")) { background = panelBackground(Palette.GOLD); target = this }
             setOnClickListener { showFinding(context, f) }
         })
     }
@@ -122,8 +109,10 @@ private fun hostDialog(host: MainActivity, card: JSONObject, focus: JSONObject?)
         changes.forEach { line("• ${it.optString("message")}", Palette.MUTED, 13f) }
     }
 
+    val scroll = ScrollView(context).apply { addView(body, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)) }
     AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
         .setTitle(card.optString("ip"))
-        .setView(ScrollView(context).apply { addView(body, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)) })
+        .setView(scroll)
         .setPositiveButton("Zamknij", null).show()
+    target?.let { row -> scroll.post { scroll.smoothScrollTo(0, (row.top - 24).coerceAtLeast(0)) } }
 }
