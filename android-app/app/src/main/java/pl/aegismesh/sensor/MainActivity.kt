@@ -57,8 +57,8 @@ class MainActivity : Activity() {
             setBackgroundColor(Palette.BLACK); setPadding(56, 120, 56, 56)
         }
         val logo = TextView(this).apply {
-            text = "◆ AEGIS MESH"; textSize = 26f; letterSpacing = 0.15f; setTypeface(typeface, Typeface.BOLD)
-            ink(Palette.GOLD); gravity = Gravity.CENTER; setPadding(0, 0, 0, 48)
+            text = "AEGIS MESH"; textSize = 26f; letterSpacing = 0.15f; setTypeface(typeface, Typeface.BOLD)
+            ink(Palette.GOLD); gravity = Gravity.CENTER; setPadding(0, 0, 0, 48); brand(96, above = true)
         }
         val start = session.origin.ifEmpty { Session.BUILT_IN }
         val server = input("Adres serwera, np. https://aegis.twoja-siec.ts.net").apply {
@@ -128,8 +128,9 @@ class MainActivity : Activity() {
             setBackgroundColor(Palette.BLACK); setPadding(16, 12, 16, 0) }
         root.addView(LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL; setPadding(8, 4, 8, 12)
-            addView(TextView(context).apply { text = "◆ AEGIS MESH"; textSize = 18f; letterSpacing = 0.15f
-                setTypeface(typeface, Typeface.BOLD); ink(Palette.GOLD) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+            addView(TextView(context).apply { text = "AEGIS MESH"; textSize = 18f; letterSpacing = 0.15f
+                setTypeface(typeface, Typeface.BOLD); ink(Palette.GOLD); gravity = Gravity.CENTER_VERTICAL; brand(30) },
+                LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
             addView(TextView(context).apply { text = "${session.username} · ${session.role}"; ink(Palette.MUTED); setPadding(0, 0, 16, 0) })
             addView(Button(context).apply { text = "Wyloguj"; gold(outline = true); setOnClickListener { logout() } })
         })
@@ -223,4 +224,13 @@ class MainActivity : Activity() {
     }
 
     companion object { const val PICK_KNOWN = 3; const val EXPORT_PINGS = 4 }
+}
+
+/** The logo (gold map pin with a Wi-Fi sign), [heightDp] tall, left of the text or [above] it. */
+internal fun TextView.brand(heightDp: Int, above: Boolean = false) {
+    val density = resources.displayMetrics.density
+    val pin = context.getDrawable(R.drawable.logo_pin) ?: return
+    pin.setBounds(0, 0, (heightDp * 0.75f * density).toInt(), (heightDp * density).toInt())
+    if (above) setCompoundDrawables(null, pin, null, null) else setCompoundDrawables(pin, null, null, null)
+    compoundDrawablePadding = (10 * density).toInt()
 }

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The AEGIS MESH logo (gold map pin with a Wi-Fi sign) for the header and the map. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="32dp"
+    android:viewportWidth="24" android:viewportHeight="32">
+    <group>
+        <path android:fillColor="#0A0A0A" android:strokeColor="#F2C230" android:strokeWidth="2.2" android:strokeLineJoin="round"
+            android:pathData="M12,2 C6.5,2 2,6.4 2,12 C2,19.5 12,30 12,30 C12,30 22,19.5 22,12 C22,6.4 17.5,2 12,2 Z"/>
+        <path android:strokeColor="#F2C230" android:strokeWidth="2" android:strokeLineCap="round"
+            android:pathData="M8.8,11.8 A4.5,4.5 0 0 1 15.2,11.8"/>
+        <path android:strokeColor="#F2C230" android:strokeWidth="2" android:strokeLineCap="round"
+            android:pathData="M7.05,9.05 A7,7 0 0 1 16.95,9.05"/>
+        <path android:fillColor="#F2C230" android:pathData="M12,15 m-1.9,0 a1.9,1.9 0 1 0 3.8,0 a1.9,1.9 0 1 0 -3.8,0"/>
+    </group>
+</vector>

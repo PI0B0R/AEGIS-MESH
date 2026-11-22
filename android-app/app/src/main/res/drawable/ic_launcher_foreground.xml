@@ -1,17 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 108 x 108 canvas; the visible part of an adaptive icon is the middle 72 x 72. -->
+<!-- 108 x 108 canvas; the visible part of an adaptive icon is the middle 72 x 72.
+     The AEGIS MESH logo: a gold map pin with a Wi-Fi sign. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <!-- shield -->
-    <path android:fillColor="#181612" android:strokeColor="#D4AF37" android:strokeWidth="3.5" android:strokeLineJoin="round"
-        android:pathData="M54,24 L76,33 C76,56 68,72 54,84 C40,72 32,56 32,33 Z"/>
-    <!-- radar arcs -->
-    <path android:strokeColor="#D4AF37" android:strokeWidth="3" android:strokeLineCap="round"
-        android:pathData="M45,58 A12,12 0 0 1 63,58"/>
-    <path android:strokeColor="#D4AF37" android:strokeWidth="3" android:strokeLineCap="round"
-        android:pathData="M40,51 A19,19 0 0 1 68,51"/>
-    <!-- centre dot -->
-    <path android:fillColor="#D4AF37"
-        android:pathData="M54,62 m-4,0 a4,4 0 1 0 8,0 a4,4 0 1 0 -8,0"/>
+    <group android:translateX="33" android:translateY="26" android:scaleX="1.75" android:scaleY="1.75">
+        <path android:fillColor="#0A0A0A" android:strokeColor="#F2C230" android:strokeWidth="2.2" android:strokeLineJoin="round"
+            android:pathData="M12,2 C6.5,2 2,6.4 2,12 C2,19.5 12,30 12,30 C12,30 22,19.5 22,12 C22,6.4 17.5,2 12,2 Z"/>
+        <path android:strokeColor="#F2C230" android:strokeWidth="2" android:strokeLineCap="round"
+            android:pathData="M8.8,11.8 A4.5,4.5 0 0 1 15.2,11.8"/>
+        <path android:strokeColor="#F2C230" android:strokeWidth="2" android:strokeLineCap="round"
+            android:pathData="M7.05,9.05 A7,7 0 0 1 16.95,9.05"/>
+        <path android:fillColor="#F2C230" android:pathData="M12,15 m-1.9,0 a1.9,1.9 0 1 0 3.8,0 a1.9,1.9 0 1 0 -3.8,0"/>
+    </group>
 </vector>
