@@ -12,6 +12,7 @@ object Palette {
     val PANEL = Color.rgb(24, 22, 18)
     val GOLD = Color.rgb(212, 175, 55)
     val GOLD_DIM = Color.argb(90, 212, 175, 55)
+    val GOLD_FILL = Color.rgb(48, 40, 18)
     val TEXT = Color.rgb(240, 230, 200)
     val MUTED = Color.rgb(160, 150, 120)
     val RED = Color.rgb(229, 57, 53)
