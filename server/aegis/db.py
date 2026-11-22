@@ -107,6 +107,8 @@ DEFAULT_SETTINGS = {
     "dojo_product": "AEGIS MESH",
     "dojo_auto": False,          # send new findings with priority >= dojo_min_priority after every scan
     "dojo_min_priority": 4,
+    "bgp_asn": None,             # scope radar: the ASN whose BGP prefixes are compared with the targets
+    "bgp_last": None,            # last good RIPEstat answer {asn, prefixes, fetched_at}, used when offline
 }
 
 

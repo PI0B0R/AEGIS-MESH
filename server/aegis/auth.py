@@ -59,6 +59,8 @@ PERMISSIONS = {
     ("POST", "/api/signatures/test"): "edytor",
     ("POST", "/api/signatures"): "edytor",
     ("DELETE", "/api/signatures/{sig_id}"): "edytor",
+    ("GET", "/api/scope/bgp"): "edytor",           # asks RIPEstat, so not for every reader
+    ("POST", "/api/scope/bgp/import"): "edytor",
     # admin: users, audit log, full export and import
     ("GET", "/api/users"): "admin",
     ("POST", "/api/users"): "admin",
