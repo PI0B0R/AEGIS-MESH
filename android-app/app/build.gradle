@@ -11,9 +11,10 @@ android {
         targetSdk 35
         versionCode 3
         versionName '0.5'
-        // The laptop's Tailscale Funnel address, e.g. https://aegis.example-tailnet.ts.net
-        // (gradle -PaegisUrl=... or the AEGIS_FUNNEL_URL repository variable in CI). Empty: the app asks or searches the LAN.
-        buildConfigField 'String', 'AEGIS_URL', '"' + (project.findProperty('aegisUrl') ?: '').toString().replace('"', '') + '"'
+        // The laptop's Tailscale Funnel address. Another one: gradle -PaegisUrl=... or the AEGIS_FUNNEL_URL
+        // repository variable in CI. When it does not answer, the app searches the Wi-Fi network.
+        def funnel = (project.findProperty('aegisUrl') ?: '').toString().trim()
+        buildConfigField 'String', 'AEGIS_URL', '"' + (funnel ?: 'https://aegis.tail36df25.ts.net').replace('"', '') + '"'
     }
     buildFeatures { buildConfig true }
     // Shared DEBUG key (public, not a secret) so every CI build installs over the previous one.
