@@ -116,8 +116,10 @@ internal class DashboardTab(private val host: MainActivity) : Tab {
             val active = summary.optRun("active_run")
             val run = active?.let { api.get("/api/scans/$it") }
             val finished = follow?.takeIf { it != active }?.let { runCatching { api.get("/api/scans/$it") }.getOrNull() }
-            val list = if (active == null || withList) lists.fetch(api, kind) else null
-            Loaded(summary, run, finished, kind, list, latency)
+            val quiet = active == null || withList
+            val list = if (quiet) lists.fetch(api, kind) else null
+            val alerts = if (quiet) runCatching { api.get("/api/findings?min_priority=4").optJSONArray("findings").objects().count(::waiting) }.getOrNull() else null
+            Loaded(summary, run, finished, kind, list, latency, alerts)
         }) { result ->
             if (mine != generation) return@work
             result.onSuccess { show(it) }.onFailure { error ->
@@ -130,7 +132,7 @@ internal class DashboardTab(private val host: MainActivity) : Tab {
     }
 
     private class Loaded(val summary: JSONObject, val run: JSONObject?, val finished: JSONObject?,
-                         val kind: TileList.Kind, val list: JSONObject?, val latency: Long)
+                         val kind: TileList.Kind, val list: JSONObject?, val latency: Long, val alerts: Int?)
 
     private fun show(data: Loaded) {
         val summary = data.summary
@@ -156,6 +158,7 @@ internal class DashboardTab(private val host: MainActivity) : Tab {
             ?: "Następny: brak harmonogramu"
         scans.text = lines.joinToString("\n")
         data.list?.let { lists.show(data.kind, it) }
+        data.alerts?.let(host::setAlertCount)
 
         ticker.postDelayed(::load, if (active != null) 1_000 else 15_000)
     }
