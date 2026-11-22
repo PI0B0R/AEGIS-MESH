@@ -16,6 +16,10 @@ AEGIS_ADMIN_PASSWORD='dlugie-haslo-admina' docker compose up -d --build
 
 Panel: http://127.0.0.1:8000 (login `admin`), API: http://127.0.0.1:8000/docs.
 
+Na Windows: Docker Desktop, a skrypt pokazu uruchom w **Git Bash** (instaluje się z Git for Windows)
+albo w WSL: `bash demo/pokaz.sh`. Hasła do `docker compose` najlepiej trzymać w pliku `.env`
+obok `docker-compose.yml` (jest w `.gitignore`), np. `DOJO_ADMIN_PASSWORD=...`.
+
 ## Dokumenty
 
 | | |

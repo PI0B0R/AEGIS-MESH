@@ -8,7 +8,9 @@
 #   BUILD=--no-build ./demo/pokaz.sh   use the image that is already built
 #
 # Needs only Docker with the compose plugin. nmap is inside the image.
+# Windows: run it in Git Bash (comes with Git for Windows) or WSL, from the repository folder.
 set -euo pipefail
+export MSYS_NO_PATHCONV=1      # Git Bash on Windows: keep /data/... and /api/... as they are
 cd "$(dirname "$0")/.."
 
 PAUSE=1; DOJO=0; FRESH=0
