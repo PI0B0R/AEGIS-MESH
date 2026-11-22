@@ -30,30 +30,15 @@ internal val STATUSES = linkedMapOf(
 
 internal fun statusLabel(status: String) = STATUSES[status] ?: status
 
-/** Which alerts a filter keeps: by waiting/checked and by priority (0 = both 4 and 5). */
-internal fun keep(status: String, priority: Int, show: String, only: Int): Boolean {
-    val byState = when (show) {
-        "waiting" -> status == "nowe"
-        "checked" -> status != "nowe"
-        else -> true
-    }
-    return byState && (only == 0 || priority == only)
-}
-
 /**
- * Tab 2: findings with priority 4-5. Filters on top (waiting / checked / all, P5 / P4), the waiting ones
- * first. Tap one for the host card. Analysts can mark one "Sprawdzone", pick another status, or undo.
+ * Tab 2: findings with priority 4-5, the waiting ones first, then the checked ones (so they can be undone). Tap one for the host card. Analysts can mark one "Sprawdzone", pick another status, or undo.
  */
 internal class AlertsTab(private val host: MainActivity) : Tab {
     private val context = host
     private val dp = context.resources.displayMetrics.density
     private var items: List<JSONObject> = emptyList()
-    private var show = "waiting"
-    private var only = 0
 
     private val info = TextView(context).apply { ink(Palette.MUTED); setPadding(8, 8, 8, 8) }
-    private val stateChips = LinearLayout(context)
-    private val priorityChips = LinearLayout(context)
     private val list = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private val undoText = TextView(context).apply { ink(); textSize = 15f }
     private val undoButton = Button(context).apply { text = "Cofnij"; textSize = 16f; setTypeface(typeface, Typeface.BOLD); gold() }
@@ -70,15 +55,13 @@ internal class AlertsTab(private val host: MainActivity) : Tab {
         addView(ScrollView(context).apply {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                addView(stateChips); addView(priorityChips); addView(info); addView(list)
+                addView(info); addView(list)
                 // room under the last alert so the undo bar does not cover it
                 addView(View(context), LinearLayout.LayoutParams(MATCH_PARENT, (90 * dp).toInt()))
             })
         }, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         addView(undoBar, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM).apply { setMargins(12, 0, 12, 16) })
     }
-
-    init { chips() }
 
     override fun refresh() {
         host.work({ host.session.api().get("/api/findings?min_priority=4") }) { result ->
@@ -87,20 +70,6 @@ internal class AlertsTab(private val host: MainActivity) : Tab {
     }
 
     override fun stop() { undoBar.removeCallbacks(hideUndo); undoBar.visibility = View.GONE }
-
-    private fun chips() {
-        fun chip(row: LinearLayout, label: String, on: Boolean, pick: () -> Unit) = row.addView(Button(context).apply {
-            text = label; isAllCaps = false; textSize = 14f; gold(outline = !on)
-            setOnClickListener { pick(); chips(); render() }
-        }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { setMargins(4, 4, 4, 4) })
-        stateChips.removeAllViews(); priorityChips.removeAllViews()
-        chip(stateChips, "Czekające", show == "waiting") { show = "waiting" }
-        chip(stateChips, "Sprawdzone", show == "checked") { show = "checked" }
-        chip(stateChips, "Wszystkie", show == "all") { show = "all" }
-        chip(priorityChips, "P4 i P5", only == 0) { only = 0 }
-        chip(priorityChips, "Tylko P5", only == 5) { only = 5 }
-        chip(priorityChips, "Tylko P4", only == 4) { only = 4 }
-    }
 
     private fun show(data: JSONObject) {
         items = data.optJSONArray("findings").objects()
@@ -112,15 +81,13 @@ internal class AlertsTab(private val host: MainActivity) : Tab {
 
     private fun render() {
         val open = items.count(::waiting)
-        val shown = items.filter { keep(it.optString("status"), it.optInt("priority"), show, only) }
         info.text = when {
             items.isEmpty() -> "Brak znalezisk z priorytetem 4–5."
-            shown.isEmpty() && show == "waiting" -> "Nic nie czeka. Wszystkie ${items.size} znaleziska 4–5 są sprawdzone."
-            shown.isEmpty() -> "Nic nie pasuje do wybranych filtrów."
-            else -> "Czeka na sprawdzenie: $open z ${items.size} · pokazano ${shown.size}. Dotknij alertu, aby zobaczyć hosta."
+            open == 0 -> "Nic nie czeka. Wszystkie ${items.size} znaleziska 4–5 są sprawdzone."
+            else -> "Czeka na sprawdzenie: $open z ${items.size}. Dotknij alertu, aby zobaczyć hosta."
         }
         list.removeAllViews()
-        shown.forEach { list.addView(item(it)) }
+        items.forEach { list.addView(item(it)) }
     }
 
     private fun item(f: JSONObject): View {
