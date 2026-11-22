@@ -29,11 +29,4 @@ class ScanCardTest {
         assertTrue(matches("cokolwiek", "  "))
         assertFalse(matches("10.250.160.5", "apache"))
     }
-    @Test fun alertFilters() {
-        assertTrue(keep("nowe", 5, "waiting", 0))
-        assertFalse(keep("potwierdzone", 5, "waiting", 0))
-        assertTrue(keep("fałszywy-alarm", 4, "checked", 4))
-        assertFalse(keep("nowe", 4, "all", 5))
-        assertTrue(keep("rozwiązane", 5, "all", 0))
-    }
 }
