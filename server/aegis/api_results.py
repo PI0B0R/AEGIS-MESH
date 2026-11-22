@@ -9,7 +9,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
+from datetime import datetime
+
 from . import db as store
+from . import scheduler as sched
 from . import findings as F
 from . import signatures as sigs
 from . import web as webprobe
@@ -60,7 +63,18 @@ def register(app: FastAPI, conn, cipher, engine) -> None:
             high = db.execute("SELECT COUNT(*) FROM findings WHERE state='active' AND priority>=4 "
                               "AND status NOT IN ('rozwiązane','fałszywy-alarm','zaakceptowane-ryzyko')").fetchone()[0]
             changes = db.execute("SELECT COUNT(*) FROM changes WHERE run_id=?", (last["id"],)).fetchone()[0] if last else 0
-            return {"active_hosts": counts.get("active", 0), "unstable_hosts": counts.get("unstable", 0),
+            moment = datetime.now(sched.zone())
+            upcoming = []
+            for row in db.execute("SELECT * FROM schedules WHERE enabled=1"):
+                started = store.parse_time(row["last_started_at"])
+                when = sched.next_start(row["frequency"], row["window_start"], row["window_end"],
+                                        started.astimezone(moment.tzinfo) if started else None, moment)
+                if when:
+                    upcoming.append({"schedule_id": row["id"], "name": row["name"], "at": when.isoformat()})
+            paused = db.execute("SELECT id FROM scan_runs WHERE status='paused' ORDER BY id DESC LIMIT 1").fetchone()
+            return {"next_scan": min(upcoming, key=lambda u: u["at"]) if upcoming else None,
+                    "paused_run": paused["id"] if paused else None,
+                    "active_hosts": counts.get("active", 0), "unstable_hosts": counts.get("unstable", 0),
                     "inactive_hosts": counts.get("inactive", 0), "changes_since_last_scan": changes,
                     "high_priority": high, "last_scan": dict(last) if last else None,
                     "active_run": engine.active_run_id()}
@@ -163,6 +177,37 @@ def register(app: FastAPI, conn, cipher, engine) -> None:
             db.close()
 
     # ---- hosts -------------------------------------------------------------------
+    @app.get("/api/inventory", tags=["hosty"], summary="Tabela hostów: stan, najwyższy priorytet, tagi, technologie")
+    def inventory(q: str | None = None, tag: str | None = None, state: str | None = None):
+        db = conn()
+        try:
+            by_ip: dict = {}
+            for f in _finding_rows(db, state="active"):
+                by_ip.setdefault(f["ip"], []).append(f)
+            out = []
+            for h in db.execute("SELECT * FROM hosts ORDER BY ip").fetchall():
+                items = by_ip.get(h["ip"], [])
+                tags = sorted({t for f in items for t in f["tags"]})
+                tech = sorted({t["name"] for f in items for t in f["technologies"]})
+                row = {"ip": h["ip"], "hostname": h["hostname"], "state": h["state"], "missed": h["missed"],
+                       "first_seen": h["first_seen"], "last_seen": h["last_seen"],
+                       "priority": max((f["priority"] for f in items), default=0),
+                       "services": [f"{f['port']}/{f['proto']}" for f in items], "tags": tags, "technologies": tech,
+                       "top": max(items, key=lambda f: f["priority"])["title"] if items else None,
+                       "edited": any(f["is_edited"] for f in items),
+                       "daypart": (json.loads(h["daypart"]) if h["daypart"] else {}).get("pattern")}
+                if state and row["state"] != state:
+                    continue
+                if tag and tag not in tags:
+                    continue
+                if q and q.lower() not in json.dumps(row, ensure_ascii=False).lower():
+                    continue
+                out.append(row)
+            out.sort(key=lambda r: (-r["priority"], [int(p) if p.isdigit() else 0 for p in r["ip"].split(".")]))
+            return {"total": len(out), "tags": sorted({t for r in out for t in r["tags"]}), "hosts": out}
+        finally:
+            db.close()
+
     @app.get("/api/hosts/unstable", tags=["hosty"], summary="Hosty niestabilne i nieaktywne")
     def unstable_hosts():
         db = conn()

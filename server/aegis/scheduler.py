@@ -67,6 +67,18 @@ def is_due(frequency: str, start: str, end: str, last_started: datetime | None, 
     return last_started is None or last_started < opened
 
 
+def next_start(frequency: str, start: str, end: str, last_started: datetime | None, moment: datetime,
+               horizon_days: int = 8) -> datetime | None:
+    """When the scheduler will start the next run (checked in 5-minute steps, like a slow clock)."""
+    step = moment.replace(second=0, microsecond=0)
+    step += timedelta(minutes=5 - step.minute % 5)
+    for _ in range(horizon_days * 24 * 12):
+        if is_due(frequency, start, end, last_started, step):
+            return step
+        step += timedelta(minutes=5)
+    return None
+
+
 class Scheduler:
     """Checks schedules every `interval` seconds: starts due runs, pauses at window end, resumes in the next window."""
 

@@ -32,8 +32,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -r server/requirements-dev.txt -e server
+      - run: pip install -r server/requirements-dev.txt -e server playwright==1.49.0
+      - run: python -m playwright install --with-deps chromium
       - name: Start server, test network and DefectDojo
+        env:
+          AEGIS_ADMIN_PASSWORD: ci-admin-haslo-123
         run: |
           docker compose --profile dojo up -d --build
           for i in $(seq 1 60); do
@@ -48,11 +51,12 @@ jobs:
           done
           docker compose logs dojo-initializer | tail -50
           exit 1
-      - name: Five scans of the test network, with changes between them
+      - name: Five scans with changes, DefectDojo, and the panel in Chromium
         working-directory: server
         env:
           AEGIS_URL: http://127.0.0.1:8000
           AEGIS_LAB_DOJO: "1"
+          AEGIS_ADMIN_PASSWORD: ci-admin-haslo-123
         run: pytest -q -m lab
       - name: Commands for the jury
         if: always()
@@ -61,6 +65,7 @@ jobs:
           docker compose exec -T aegis aegis changes || true
           docker compose exec -T aegis aegis findings list --min-priority 3 || true
           docker compose exec -T aegis aegis unstable || true
+          docker compose exec -T aegis aegis audit || true
           docker compose logs aegis | tail -50
       - if: always()
         run: docker compose --profile dojo --profile zmiana down -v

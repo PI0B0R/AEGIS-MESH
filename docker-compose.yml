@@ -3,6 +3,7 @@
 #   docker compose exec aegis aegis targets add 172.30.0.0/27
 #   docker compose exec aegis aegis scan start --wait
 #   docker compose exec aegis aegis hosts
+# Panel: http://127.0.0.1:8000 (admin password: docker compose exec aegis cat /data/admin-password.txt)
 # API and its documentation: http://127.0.0.1:8000/docs
 #
 # Optional profiles:
@@ -17,12 +18,14 @@ services:
     image: aegis-mesh/server:dev
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8000:8000"           # localhost only until login and roles arrive (stage 3)
+      - "${AEGIS_BIND:-127.0.0.1}:8000:8000"   # panel + API; AEGIS_BIND=0.0.0.0 opens it to the network
     volumes:
       - aegis-data:/data                # database
       - aegis-keys:/keys                # encryption key, kept apart from the database
     environment:
       AEGIS_TZ: Europe/Warsaw
+      # First start: admin password from here, or a random one saved in /data/admin-password.txt
+      AEGIS_ADMIN_PASSWORD: ${AEGIS_ADMIN_PASSWORD:-}
       # Used only until DefectDojo is set in the settings; harmless when the dojo profile is off.
       AEGIS_DOJO_URL: http://dojo-uwsgi:8081    # DefectDojo API inside compose (its UI is dojo-nginx)
       AEGIS_DOJO_USER: admin

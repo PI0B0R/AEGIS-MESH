@@ -1,4 +1,4 @@
-# AEGIS MESH: serwer (etapy 1 i 2)
+# AEGIS MESH: serwer i panel (etapy 1–3)
 
 Serwer skanuje sieć programem nmap w bezpiecznych ustawieniach, zapisuje wyniki
 w bazie SQLite i pokazuje je przez API oraz komendy w terminalu. Wszystko działa
@@ -7,13 +7,56 @@ lokalnie, bez chmury i bez AI. Laptop potrzebuje tylko Dockera: nmap jest w obra
 ## Start w 3 krokach
 
 ```bash
-docker compose up -d --build                                   # serwer + mała sieć testowa
+AEGIS_ADMIN_PASSWORD='wybierz-dlugie-haslo' docker compose up -d --build   # serwer + mała sieć testowa
 docker compose exec aegis aegis targets add 172.30.0.0/27 --note "sieć testowa"
 docker compose exec aegis aegis scan start --wait              # skan z paskiem postępu
-docker compose exec aegis aegis hosts                          # hosty i usługi
 ```
 
+Potem otwórz **panel: http://127.0.0.1:8000** i zaloguj się jako `admin` hasłem z `AEGIS_ADMIN_PASSWORD`.
+Bez tej zmiennej hasło jest losowe: `docker compose exec aegis cat /data/admin-password.txt`.
+
 Dokumentacja API (można klikać i wysyłać zapytania): http://127.0.0.1:8000/docs
+(przycisk „Authorize”: token z `POST /api/auth/login`).
+
+## Panel WWW: 5 ekranów
+
+| Ekran | Do czego |
+|---|---|
+| **Pulpit** | trzy kafelki (aktywne hosty, zmiany od ostatniego skanu, wysoki priorytet), „Co nowego” od najważniejszego, wykres zmian, ostatni i następny skan, „Skanuj teraz” |
+| **Cele** | jedno pole: wklej adresy albo upuść plik CSV/JSON; harmonogram jednym kliknięciem; ustawienia skanera pod „Zaawansowane” |
+| **Hosty** | tabela z wyszukiwarką i filtrami po tagach; karta hosta z usługami, nagłówkami, ciasteczkami, certyfikatem, historią i edycją znalezisk |
+| **Sygnatury** | prosty formularz i „Sprawdź na istniejących hostach” |
+| **Ustawienia** | użytkownicy i role, DefectDojo, eksport i import, dziennik zmian (tylko admin) |
+
+Kolorem oznaczony jest tylko priorytet. Przycisków, do których ktoś nie ma prawa, w ogóle nie widać.
+
+## Role i logowanie
+
+| Rola w zadaniu | Rola w systemie | Może |
+|---|---|---|
+| Administracja | `admin` | wszystko: użytkownicy, DefectDojo, pełny import |
+| Dodawanie, usuwanie, modyfikacja | `edytor` | cele, sygnatury, skany, harmonogram, ustawienia skanera |
+| Modyfikacja i odczyt | `analityk` | edycja znalezisk (tagi, priorytet, notatki, status), wysyłka do DefectDojo |
+| Odczyt | `czytelnik` | tylko podgląd |
+
+Każda rola ma też prawa ról niższych. Konta zakłada tylko admin (brak samodzielnej rejestracji).
+Hasła są przechowywane jako skróty scrypt, po 5 błędnych próbach konto blokuje się na 15 minut,
+token po zalogowaniu wygasa po 12 godzinach, a zmiana roli lub hasła kończy sesje.
+Każda zmiana przez API trafia do dziennika (`aegis audit`).
+
+```bash
+docker compose exec aegis aegis users add jan --role analityk        # zapyta o hasło
+docker compose exec aegis aegis users list
+docker compose exec aegis aegis users role 3 edytor
+docker compose exec aegis aegis users unlock 3
+docker compose exec aegis aegis audit
+```
+
+Komendy `aegis` uruchamiane w kontenerze serwera działają jako administrator (token terminala
+w `/data/cli.token`, nowy przy każdym starcie). Z innego komputera: `AEGIS_URL=... AEGIS_TOKEN=... aegis ...`.
+
+Panel jest domyślnie dostępny tylko z tego komputera. `AEGIS_BIND=0.0.0.0 docker compose up -d`
+otwiera go w sieci (logowanie jest zawsze wymagane).
 
 Sieć testowa `172.30.0.0/24` zawiera: nginx (.20), Apache (.21), stronę „staging”
 z panelem logowania bez HTTPS (.22, port 8080), stronę na WordPressie (.23),
@@ -158,18 +201,26 @@ Inna instancja (np. od organizatorów):
 docker compose exec aegis aegis settings dojo_url=https://dojo.example dojo_token=TOKEN
 ```
 
-## Eksport
+## Eksport i import
+
+W panelu: Hosty → „Eksport CSV/JSON”, Ustawienia → „Eksport i import”. W terminalu:
 
 ```bash
 docker compose exec aegis aegis export --format csv > znaleziska.csv
 docker compose exec aegis aegis export --format json > znaleziska.json
+docker compose exec aegis aegis export --format full > aegis-eksport.json     # cele, harmonogram, sygnatury, hosty, znaleziska
+docker compose exec -T aegis aegis import findings - < znaleziska.csv        # edycje z CSV/JSON (tagi, priorytet, notatki, status)
+docker compose exec -T aegis aegis import full - < aegis-eksport.json         # np. na nowy serwer
 ```
+
+Import edycji zmienia tylko to, co różni się od obecnego stanu, i oznacza te pola jako „edytowane”.
 
 ## Szyfrowanie
 
 Wrażliwe pola są w bazie zaszyfrowane AES-256-GCM: notatki, banery usług (produkt, wersja),
 dane HTTP (nagłówki, ciasteczka, treść strony, tytuł), technologie i opisy znalezisk, opisy zmian
-oraz hasło i token DefectDojo. Jawne zostają tylko adresy, porty, priorytety, tagi i stany,
+oraz hasło i token DefectDojo. Hasła użytkowników to skróty scrypt, tokeny sesji są
+zapisane jako skróty SHA-256. Jawne zostają tylko adresy, porty, priorytety, tagi i stany,
 żeby listy dało się filtrować. Klucz leży w osobnym wolumenie `aegis-keys`
 (`/keys/aegis.key`), a baza w `aegis-data`. Klucz można też podać zmienną `AEGIS_KEY` (base64).
 
@@ -181,6 +232,8 @@ pip install -r requirements-dev.txt -e .
 pytest -q                                          # testy jednostkowe (bez nmapa)
 AEGIS_URL=http://127.0.0.1:8000 pytest -q -m lab   # pięć prawdziwych skanów sieci testowej ze zmianami
 AEGIS_URL=http://127.0.0.1:8000 AEGIS_LAB_DOJO=1 pytest -q -m lab   # to samo + wysyłka do DefectDojo
+# panel w prawdziwej przeglądarce (pip install playwright && playwright install chromium):
+AEGIS_URL=http://127.0.0.1:8000 AEGIS_ADMIN_PASSWORD=... pytest -q -m lab tests/test_panel_browser.py
 ```
 
 CI na GitHubie (`.github/workflows/server.yml`) uruchamia oba zestawy, w tym `docker compose` z DefectDojo.

@@ -1,23 +1,25 @@
-"""HTTP API. Interactive documentation: /docs (Swagger) and /redoc, schema: /openapi.json.
+"""HTTP API and web panel. Interactive documentation: /docs (Swagger) and /redoc, schema: /openapi.json.
 
-Stage 1 has no login yet (roles come in stage 3), so by default the server listens on
-127.0.0.1 only and docker compose publishes the port on localhost only.
+Every API route needs a login token (see auth.py for roles). The panel is served at /.
 """
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import __version__
+from . import auth
 from . import db as store
 from . import dojo
 from .crypto import FieldCipher
 from .engine import Engine
 from .scheduler import TEMPLATES, Scheduler, validate
+from .api_admin import register as register_admin
 from .api_results import register as register_results
 from .targets import parse_any, parse_text
 
@@ -100,6 +102,12 @@ def create_app(data_dir: str | os.PathLike | None = None, key_path: str | os.Pat
     store.initialize(db_path)
     cipher = FieldCipher.load(key)
     _dojo_from_env(db_path, cipher)
+    first = store.connect(db_path)
+    try:
+        auth.ensure_first_admin(first, data)
+    finally:
+        first.close()
+    cli_token = auth.terminal_token(data)
     engine = Engine(db_path, cipher, probe=probe, after_run=dojo.after_run(db_path, cipher),
                     **({"run_chunk": run_chunk} if run_chunk else {}))
     scheduler = Scheduler(db_path, engine)
@@ -111,14 +119,30 @@ def create_app(data_dir: str | os.PathLike | None = None, key_path: str | os.Pat
         yield
         scheduler.stop()
 
+    def conn():
+        return store.connect(db_path)
+
     app = FastAPI(title="AEGIS MESH API", version=__version__, lifespan=lifespan,
+                  dependencies=[Depends(auth.dependency(conn, cli_token))],
                   description="Skaner discovery dużej infrastruktury: cele, skany nmap z harmonogramem, "
                               "rozpoznawanie HTTP/HTTPS i technologii, sygnatury, porównanie skanów, "
                               "hosty niestabilne, znaleziska z ochroną ręcznych edycji, eksport do DefectDojo.")
     app.state.engine, app.state.scheduler, app.state.cipher, app.state.db_path = engine, scheduler, cipher, db_path
+    app.state.cli_token = cli_token
 
-    def conn():
-        return store.connect(db_path)
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        if not request.url.path.startswith(("/docs", "/redoc")):
+            response.headers.setdefault("Content-Security-Policy",
+                                        "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; "
+                                        "frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        if request.url.path.startswith("/api/"):
+            response.headers.setdefault("Cache-Control", "no-store")
+        return response
 
     @app.exception_handler(ValueError)
     async def bad_input(_request: Request, error: ValueError):
@@ -305,10 +329,13 @@ def create_app(data_dir: str | os.PathLike | None = None, key_path: str | os.Pat
             db.close()
 
     @app.patch("/api/settings", tags=["ustawienia"])
-    def patch_settings(body: SettingsPatch):
+    def patch_settings(body: SettingsPatch, request: Request):
+        changes = body.model_dump(exclude_none=True)
+        if any(k.startswith("dojo_") for k in changes) and not auth.can(request.state.user, "admin"):
+            raise HTTPException(403, "Ustawienia DefectDojo może zmieniać tylko admin.")
         db = conn()
         try:
-            for key, value in body.model_dump(exclude_none=True).items():
+            for key, value in changes.items():
                 if key in SECRET_SETTINGS:
                     value = cipher.seal(value, f"settings.{key}") if value else None
                 store.save_setting(db, key, value)
@@ -375,6 +402,15 @@ def create_app(data_dir: str | os.PathLike | None = None, key_path: str | os.Pat
             db.close()
 
     register_results(app, conn, cipher, engine)
+    register_admin(app, conn, cipher)
+
+    panel = Path(__file__).with_name("panel")
+    app.mount("/static", StaticFiles(directory=panel / "static"), name="static")
+
+    @app.get("/", include_in_schema=False)
+    def index():
+        return FileResponse(panel / "index.html")
+
     return app
 
 

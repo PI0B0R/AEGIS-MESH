@@ -53,6 +53,15 @@ CREATE TABLE IF NOT EXISTS signatures (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, pattern TEXT NOT NULL DEFAULT '', field TEXT,
     category TEXT NOT NULL DEFAULT 'inne', priority INTEGER NOT NULL DEFAULT 1, tags TEXT NOT NULL DEFAULT '[]',
     message TEXT NOT NULL DEFAULT '', status TEXT, enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role TEXT NOT NULL,
+    disabled INTEGER NOT NULL DEFAULT 0, failed_logins INTEGER NOT NULL DEFAULT 0, locked_until TEXT,
+    last_login TEXT, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS audit (
+    id INTEGER PRIMARY KEY, at TEXT NOT NULL, username TEXT, action TEXT NOT NULL, target TEXT);
 CREATE TABLE IF NOT EXISTS schedules (
     id INTEGER PRIMARY KEY, name TEXT NOT NULL, frequency TEXT NOT NULL, window_start TEXT NOT NULL,
     window_end TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, last_started_at TEXT, created_at TEXT NOT NULL);
