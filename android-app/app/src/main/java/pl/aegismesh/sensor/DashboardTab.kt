@@ -1,5 +1,6 @@
 package pl.aegismesh.sensor
 
+import android.animation.ValueAnimator
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
@@ -9,6 +10,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.view.Gravity
 import android.view.View
+import android.view.animation.LinearInterpolator
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.*
@@ -19,8 +21,8 @@ import org.json.JSONObject
 
 /**
  * Tab 1: the scan card (big icon, status, progress, connection), the same three tiles as the
- * web panel, the last and next scan, and "Co nowego". While a scan runs the card follows it
- * every 2 s; otherwise the tab checks every 15 s, so a scan started by the schedule shows up too.
+ * web panel (tap one to list its hosts, changes or findings below), the last and next scan.
+ * While a scan runs the card follows it every second; otherwise the tab checks every 15 s, so a scan started by the schedule shows up too.
  * A banner slides in when a scan starts and when it ends.
  */
 internal class DashboardTab(private val host: MainActivity) : Tab {
@@ -48,7 +50,12 @@ internal class DashboardTab(private val host: MainActivity) : Tab {
     }
     private val tiles = LinearLayout(context)
     private val scans = TextView(context).apply { ink(Palette.MUTED); textSize = 14f; setPadding(8, 16, 8, 8) }
-    private val news = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+    private val lists = TileList(host)
+    private var lastSummary: JSONObject? = null
+    /** The percentage on screen; it glides towards the newest estimate and never goes back within one scan. */
+    private var shownPercent = 0f
+    private var shownRun = -1
+    private var glide: ValueAnimator? = null
     private val banner = TextView(context).apply {
         textSize = 18f; setTypeface(typeface, Typeface.BOLD); gravity = Gravity.CENTER
         setPadding((20 * dp).toInt(), (18 * dp).toInt(), (20 * dp).toInt(), (18 * dp).toInt())
@@ -72,8 +79,7 @@ internal class DashboardTab(private val host: MainActivity) : Tab {
                 }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { setMargins(6, 6, 6, 10) })
                 addView(tiles)
                 addView(scans)
-                addView(heading(context, "Co nowego"))
-                addView(news)
+                addView(lists.view)
             })
         }, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         addView(banner, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.TOP).apply { setMargins(12, 12, 12, 0) })
@@ -95,12 +101,13 @@ internal class DashboardTab(private val host: MainActivity) : Tab {
 
     override fun refresh() { stop(); load() }
 
-    override fun stop() { generation++; ticker.removeCallbacksAndMessages(null) }
+    override fun stop() { generation++; ticker.removeCallbacksAndMessages(null); glide?.cancel() }
 
     private fun load() {
         val mine = generation
         val follow = following
-        val withChanges = firstLoad
+        val withList = firstLoad
+        val kind = lists.kind
         host.work({
             val api = host.session.api()
             val began = SystemClock.elapsedRealtime()
@@ -109,8 +116,8 @@ internal class DashboardTab(private val host: MainActivity) : Tab {
             val active = summary.optRun("active_run")
             val run = active?.let { api.get("/api/scans/$it") }
             val finished = follow?.takeIf { it != active }?.let { runCatching { api.get("/api/scans/$it") }.getOrNull() }
-            val changes = if (active == null || withChanges) api.get("/api/changes?limit=20") else null
-            Loaded(summary, run, finished, changes, latency)
+            val list = if (active == null || withList) lists.fetch(api, kind) else null
+            Loaded(summary, run, finished, kind, list, latency)
         }) { result ->
             if (mine != generation) return@work
             result.onSuccess { show(it) }.onFailure { error ->
@@ -122,7 +129,8 @@ internal class DashboardTab(private val host: MainActivity) : Tab {
         }
     }
 
-    private class Loaded(val summary: JSONObject, val run: JSONObject?, val finished: JSONObject?, val changes: JSONObject?, val latency: Long)
+    private class Loaded(val summary: JSONObject, val run: JSONObject?, val finished: JSONObject?,
+                         val kind: TileList.Kind, val list: JSONObject?, val latency: Long)
 
     private fun show(data: Loaded) {
         val summary = data.summary
@@ -139,19 +147,17 @@ internal class DashboardTab(private val host: MainActivity) : Tab {
 
         showCard(summary, data.run)
         showSignal(data.latency)
-        tiles.removeAllViews()
-        tile(summary.optInt("active_hosts"), "aktywne hosty", Palette.TEXT)
-        tile(summary.optInt("changes_since_last_scan"), "zmiany", Palette.TEXT)
-        tile(summary.optInt("high_priority"), "priorytet 4–5", if (summary.optInt("high_priority") > 0) Palette.RED else Palette.TEXT)
+        lastSummary = summary
+        showTiles(summary)
 
         val lines = mutableListOf<String>()
         summary.optJSONObject("last_scan")?.let { lines += "Ostatni skan: #${it.optInt("id")}, ${clock(it.optString("finished_at"))}" }
         lines += summary.optJSONObject("next_scan")?.let { "Następny: ${clock(it.optString("at"))} (${it.optString("name")})" }
             ?: "Następny: brak harmonogramu"
         scans.text = lines.joinToString("\n")
-        data.changes?.let(::showNews)
+        data.list?.let { lists.show(data.kind, it) }
 
-        ticker.postDelayed(::load, if (active != null) 2_000 else 15_000)
+        ticker.postDelayed(::load, if (active != null) 1_000 else 15_000)
     }
 
     /** The big card: icon, one-line status, details, progress bar and the button. */
@@ -167,16 +173,15 @@ internal class DashboardTab(private val host: MainActivity) : Tab {
                 state("SKAN CZEKA W KOLEJCE", Palette.GOLD, "Skan #${run.optInt("id")} zaraz ruszy.")
             }
             run != null -> {
-                val percent = run.optDouble("progress", 0.0)
+                val percent = estimate(run)
                 val total = run.optInt("total_hosts")
-                val chunks = run.optJSONArray("chunks")
-                var found = 0
-                if (chunks != null) for (i in 0 until chunks.length()) found += chunks.getJSONObject(i).optInt("hosts_up")
-                pulse.mode = ScanPulseView.Mode.RUNNING; pulse.progress = percent.toFloat()
-                bar.visibility = View.VISIBLE; bar.progress = (percent * 10).toInt()
+                val found = run.optJSONArray("chunks").objects().sumOf { it.optInt("hosts_up") }
+                pulse.mode = ScanPulseView.Mode.RUNNING
+                bar.visibility = View.VISIBLE
+                glideTo(run.optInt("id"), percent.toFloat())
                 val elapsed = secondsSince(run.optString("started_at"))
                 val left = run.optDouble("estimate_seconds", Double.NaN).let { if (it.isNaN() || elapsed == null) null else (it - elapsed).toLong() }
-                state("SKAN TRWA · ${percent.toInt()}%", Palette.GOLD,
+                state(runningTitle(shownPercent), Palette.GOLD,
                     "Skan #${run.optInt("id")} · ${(percent * total / 100).toInt()} z $total adresów\n" +
                         "Znalezione hosty: $found\n" +
                         "Ruszył ${clock(run.optString("started_at"))}" +
@@ -208,6 +213,49 @@ internal class DashboardTab(private val host: MainActivity) : Tab {
     }
 
     private fun state(text: String, color: Int, more: String) { title.text = text; title.ink(color); detail.text = more }
+
+    private fun runningTitle(percent: Float) = "SKAN TRWA · ${percent.toInt()}%"
+
+    /** The server's progress moves when a whole part of the scan ends; between those, estimate from how long the running parts take. */
+    private fun estimate(run: JSONObject): Double {
+        val parts = run.optJSONArray("chunks").objects().filter { it.optString("kind", "scan") == "scan" }
+        val done = parts.filter { it.optString("status") == "done" }
+        val measured = done.sumOf { it.optDouble("duration_seconds", 0.0) }
+        val doneSize = done.sumOf { it.optInt("size") }
+        val total = run.optInt("total_hosts")
+        val perAddress = when {
+            measured > 0 && doneSize > 0 -> measured / doneSize
+            run.optDouble("estimate_seconds", 0.0) > 0 && total > 0 -> run.optDouble("estimate_seconds") / total
+            else -> 60.0 / run.optInt("chunk_size", 64).coerceAtLeast(1)
+        }
+        val running = parts.filter { it.optString("status") == "running" }
+            .map { it.optInt("size") to (secondsSince(it.optString("started_at"))?.toDouble() ?: 0.0) }
+        val live = liveProgress(total, doneSize, running, perAddress)
+        return maxOf(live, run.optDouble("progress", 0.0))
+    }
+
+    /** Moves the ring, bar and title smoothly to [target] over about one poll. */
+    private fun glideTo(runId: Int, target: Float) {
+        if (runId != shownRun) { shownRun = runId; shownPercent = 0f }
+        val goal = maxOf(target, shownPercent)
+        glide?.cancel()
+        glide = ValueAnimator.ofFloat(shownPercent, goal).apply {
+            duration = 1_100; interpolator = LinearInterpolator()
+            addUpdateListener {
+                shownPercent = it.animatedValue as Float
+                pulse.progress = shownPercent; bar.progress = (shownPercent * 10).toInt()
+                if (pulse.mode == ScanPulseView.Mode.RUNNING) title.text = runningTitle(shownPercent)
+            }
+            start()
+        }
+    }
+
+    private fun showTiles(summary: JSONObject) {
+        tiles.removeAllViews()
+        tile(summary.optInt("active_hosts"), "aktywne hosty", Palette.TEXT, TileList.Kind.HOSTS)
+        tile(summary.optInt("changes_since_last_scan"), "zmiany", Palette.TEXT, TileList.Kind.CHANGES)
+        tile(summary.optInt("high_priority"), "priorytet 4–5", if (summary.optInt("high_priority") > 0) Palette.RED else Palette.TEXT, TileList.Kind.PRIORITY)
+    }
 
     private fun showSignal(latency: Long) {
         val label = signalLabel(latency)
@@ -258,24 +306,21 @@ internal class DashboardTab(private val host: MainActivity) : Tab {
         context.getSystemService(Vibrator::class.java)?.vibrate(VibrationEffect.createOneShot(200, VibrationEffect.DEFAULT_AMPLITUDE))
     }
 
-    private fun showNews(changes: JSONObject) {
-        news.removeAllViews()
-        val items = changes.optJSONArray("changes")
-        if (items == null || items.length() == 0) {
-            news.addView(TextView(context).apply { text = "Brak zmian po ostatnim skanie."; ink(Palette.MUTED); setPadding(8, 8, 8, 8) })
-            return
-        }
-        for (i in 0 until items.length()) {
-            val c = items.getJSONObject(i)
-            news.addView(row(context, c.optInt("priority"), c.optString("message"), c.optString("ip")))
-        }
-    }
-
-    private fun tile(value: Int, label: String, color: Int) {
+    private fun tile(value: Int, label: String, color: Int, kind: TileList.Kind) {
+        val selected = lists.kind == kind
         val box = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL; background = panelBackground(); setPadding(20, 18, 20, 18)
+            orientation = LinearLayout.VERTICAL; setPadding(20, 18, 20, 18)
+            background = GradientDrawable().apply {
+                cornerRadius = 22f; setColor(if (selected) Palette.GOLD_FILL else Palette.PANEL)
+                setStroke(if (selected) (3 * dp).toInt() else 2, if (selected) Palette.GOLD else Palette.GOLD_DIM)
+            }
             addView(TextView(context).apply { text = value.toString(); textSize = 34f; setTypeface(typeface, Typeface.BOLD); setTextColor(color) })
-            addView(TextView(context).apply { text = label; ink(Palette.MUTED) })
+            addView(TextView(context).apply { text = (if (selected) "▼ " else "") + label; ink(if (selected) Palette.GOLD else Palette.MUTED) })
+            isClickable = true
+            setOnClickListener {
+                lists.select(kind)
+                lastSummary?.let(::showTiles)
+            }
         }
         tiles.addView(box, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { setMargins(6, 6, 6, 6) })
     }
@@ -287,6 +332,19 @@ private fun JSONObject.optRun(name: String): Int? = if (isNull(name)) null else 
 private fun secondsSince(iso: String?): Long? = runCatching {
     java.time.Duration.between(OffsetDateTime.parse(iso), OffsetDateTime.now()).seconds.coerceAtLeast(0)
 }.getOrNull()
+
+/**
+ * Scan progress in percent: finished addresses count fully, and each running part counts by how long
+ * it has run against how long it should take ([secondsPerAddress] × its size), at most 95 % of it.
+ */
+internal fun liveProgress(total: Int, doneSize: Int, running: List<Pair<Int, Double>>, secondsPerAddress: Double): Double {
+    if (total <= 0) return 100.0
+    val partial = running.sumOf { (size, elapsed) ->
+        val expected = secondsPerAddress * size
+        if (expected <= 0) 0.0 else size * (elapsed / expected).coerceIn(0.0, 0.95)
+    }
+    return (100.0 * (doneSize + partial) / total).coerceIn(0.0, 100.0)
+}
 
 /** "45 s", "3 min 05 s", "1 h 02 min". */
 internal fun duration(seconds: Long): String = when {
@@ -313,12 +371,12 @@ internal fun heading(context: android.content.Context, text: String) = TextView(
 }
 
 /** One list row: a priority badge, the sentence and a small line under it. */
-internal fun row(context: android.content.Context, priority: Int, title: String, sub: String): LinearLayout =
+internal fun row(context: android.content.Context, priority: Int, title: String, sub: String, badge: String = "P$priority"): LinearLayout =
     LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL; background = panelBackground(); setPadding(18, 16, 18, 16)
         layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { setMargins(6, 6, 6, 6) }
         addView(TextView(context).apply {
-            text = "P$priority"; gravity = Gravity.CENTER; setTypeface(typeface, Typeface.BOLD)
+            text = badge; gravity = Gravity.CENTER; setTypeface(typeface, Typeface.BOLD)
             setTextColor(priorityColor(priority)); background = panelBackground(priorityColor(priority)); setPadding(12, 6, 12, 6)
         }, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { setMargins(0, 0, 18, 0) })
         addView(LinearLayout(context).apply {

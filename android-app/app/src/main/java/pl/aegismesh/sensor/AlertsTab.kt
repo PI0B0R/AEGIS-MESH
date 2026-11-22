@@ -1,6 +1,5 @@
 package pl.aegismesh.sensor
 
-import android.app.AlertDialog
 import android.view.View
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.*
@@ -49,7 +48,7 @@ internal class AlertsTab(private val host: MainActivity) : Tab {
         val sub = listOf(findingPlace(f), if (waiting(f)) "" else f.optString("status"), tags).filter { it.isNotEmpty() }.joinToString(" · ")
         val view = row(context, f.optInt("priority"), f.optString("title"), sub)
         if (!waiting(f)) view.alpha = 0.6f
-        view.setOnClickListener { details(f) }
+        view.setOnClickListener { showFinding(context, f) }
         if (waiting(f) && host.session.canEditFindings) {
             val box = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; addView(view) }
             box.addView(Button(context).apply {
@@ -65,18 +64,5 @@ internal class AlertsTab(private val host: MainActivity) : Tab {
         host.work({ host.session.api().patch("/api/findings/$id", JSONObject().put("status", CHECKED)) }) { result ->
             result.onSuccess { host.say("Oznaczono jako sprawdzone."); refresh() }.onFailure { host.fail(it); refresh() }
         }
-    }
-
-    private fun details(f: JSONObject) {
-        val tech = f.optJSONArray("technologies")?.let { a ->
-            (0 until a.length()).joinToString(", ") { a.getJSONObject(it).let { t -> listOf(t.optString("name"), t.optString("version").takeIf { v -> v.isNotEmpty() && v != "null" }).filterNotNull().joinToString(" ") } }
-        }.orEmpty()
-        val reasons = f.optJSONArray("reasons")?.let { a -> (0 until a.length()).joinToString("\n") { "• " + a.getJSONObject(it).optString("message") } }.orEmpty()
-        val note = f.optString("note").takeIf { it.isNotEmpty() && it != "null" }
-        val text = listOfNotNull(findingPlace(f), "Status: ${f.optString("status")}",
-            tech.takeIf { it.isNotEmpty() }?.let { "Technologie: $it" }, reasons.takeIf { it.isNotEmpty() }?.let { "Dlaczego:\n$it" },
-            note?.let { "Notatka: $it" }).joinToString("\n\n")
-        AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("P${f.optInt("priority")} · ${f.optString("title")}").setMessage(text).setPositiveButton("OK", null).show()
     }
 }
