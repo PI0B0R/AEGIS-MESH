@@ -204,6 +204,11 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         val uri = data?.data
+        if (requestCode == EXPORT_PINGS && resultCode == RESULT_OK && uri != null) {
+            runCatching { contentResolver.openOutputStream(uri)!!.use { it.write(PingStore.text(this).toByteArray(Charsets.UTF_8)) } }
+                .onSuccess { say("Zapisano plik CSV z pingami.") }.onFailure { status.ink(Palette.ORANGE); status.text = it.localizedMessage }
+            return
+        }
         if (requestCode != PICK_KNOWN || resultCode != RESULT_OK || uri == null) return
         runCatching {
             val bytes = contentResolver.openInputStream(uri)!!.use { it.readBytes() }
@@ -217,5 +222,5 @@ class MainActivity : Activity() {
         this.hint = hint; setSingleLine(); ink(); setHintTextColor(Palette.MUTED); backgroundTintList = tint(Palette.GOLD)
     }
 
-    companion object { const val PICK_KNOWN = 3 }
+    companion object { const val PICK_KNOWN = 3; const val EXPORT_PINGS = 4 }
 }

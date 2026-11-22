@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<link rel="stylesheet" href="leaflet.css">
+<style>
+  html, body, #map { margin: 0; height: 100%; background: #0a0a0a; }
+  .leaflet-container { background: #111; }
+  .note { position: absolute; top: 8px; left: 50px; z-index: 1000; color: #d4af37; background: rgba(10,10,10,.75);
+          font: 14px sans-serif; padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(212,175,55,.5); }
+  .sweep { width: 240px; height: 240px; margin: -120px 0 0 -120px; border-radius: 50%; pointer-events: none;
+           border: 2px solid rgba(212,175,55,.7);
+           background: conic-gradient(rgba(212,175,55,0) 0deg, rgba(212,175,55,0) 250deg, rgba(212,175,55,.6) 360deg);
+           animation: spin 3s linear 1 forwards, fade .6s ease-in 3s 1 forwards; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(540deg); } }
+  @keyframes fade { to { opacity: 0; } }
+  .router-label { background: rgba(10,10,10,.8); color: #f0e6c8; border: 1px solid #d4af37; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="note" id="note">Czekam na GPS…</div>
+<script src="leaflet.js"></script>
+<script src="radar.js"></script>
+</body>
+</html>

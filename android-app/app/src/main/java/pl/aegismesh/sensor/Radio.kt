@@ -86,7 +86,7 @@ fun parseKnown(text: String): List<KnownAp> {
     }.distinctBy { it.ssid to it.bssid }
 }
 
-private fun splitCsv(line: String): List<String> {
+internal fun splitCsv(line: String): List<String> {
     val out = mutableListOf<String>(); val cell = StringBuilder(); var quoted = false; var i = 0
     while (i < line.length) {
         val c = line[i]
