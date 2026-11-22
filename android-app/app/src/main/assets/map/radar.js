@@ -1,6 +1,6 @@
 /* AEGIS MESH radar map. The app pushes data with aegis.update(...), aegis.pings(...), aegis.sweep(). */
 (function () {
-  var map = L.map('map', { preferCanvas: true, zoomControl: true }).setView([50.0647, 19.9234], 15);
+  var map = L.map('map', { preferCanvas: true, zoomControl: true }).setView([52.07, 19.48], 6);   // all of Poland until the phone's own position arrives
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 21, maxNativeZoom: 19, attribution: '© OpenStreetMap'
   }).addTo(map);
@@ -76,7 +76,9 @@
         if (first) { map.setView(at, 18); first = false; } else if (follow) map.panTo(at);
         note.style.display = 'none';
       } else {
-        note.textContent = data.waiting || 'Czekam na GPS…'; note.style.display = 'block';
+        // no fresh position: hide the pin rather than show an old place
+        if (me) { map.removeLayer(me); map.removeLayer(meRing); me = meRing = null; first = true; }
+        note.textContent = data.waiting || 'Szukam lokalizacji…'; note.style.display = 'block';
       }
       if (data.weak) { note.textContent = data.weak; note.style.display = 'block'; }
       if ('selected' in data) selected = data.selected;
