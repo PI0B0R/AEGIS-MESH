@@ -47,6 +47,8 @@ internal class RadarTab(private val host: MainActivity) : Tab {
     private var drawnPings = -1
     private val pings: MutableList<Ping> by lazy { PingStore.load(context) }
     private var estimates: Map<String, Estimate> = emptyMap()
+    /** The router picked in the list or on the map: drawn red and bigger until another one is picked. */
+    private var selected: String? = null
 
     private val summary = TextView(context).apply { ink(Palette.MUTED); textSize = 13f; setPadding(8, 4, 8, 4) }
     private val collect = Button(context).apply { setOnClickListener { toggleCollecting() } }
@@ -65,6 +67,10 @@ internal class RadarTab(private val host: MainActivity) : Tab {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest) = true
             override fun onPageFinished(view: WebView, url: String) { mapReady = true; drawnPings = -1; pushMap() }
         }
+        addJavascriptInterface(object {
+            @android.webkit.JavascriptInterface
+            fun select(bssid: String?) { post { choose(bssid, fromMap = true) } }
+        }, "AegisApp")
         loadUrl("file:///android_asset/map/radar.html")
     }
 
@@ -74,11 +80,12 @@ internal class RadarTab(private val host: MainActivity) : Tab {
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
             val view = super.getView(position, convertView, parent)
             val row = getItem(position)!!
+            view.setBackgroundColor(if (row.bssid == selected) 0x33E53935 else 0)
             val ssid = (row.seen?.ssid ?: row.estimate?.ssid).orEmpty().ifEmpty { "(ukryta sieć)" }
             val signal = row.seen?.let { "${it.rssi} dBm" } ?: "poza zasięgiem"
             view.findViewById<TextView>(android.R.id.text1).apply {
-                text = "● ${row.verdict.status.label} · $ssid · $signal"
-                setTextColor(Palette.status(row.verdict.status))
+                text = (if (row.bssid == selected) "◉ " else "● ") + "${row.verdict.status.label} · $ssid · $signal"
+                setTextColor(if (row.bssid == selected) SELECTED else Palette.status(row.verdict.status))
             }
             view.findViewById<TextView>(android.R.id.text2).apply {
                 text = row.estimate?.let { "${it.pings} pingów z ${it.places} miejsc · położenie ±${it.radius.toInt()} m · pewność: ${it.confidence}" }
@@ -91,7 +98,7 @@ internal class RadarTab(private val host: MainActivity) : Tab {
     private val list = ListView(context).apply {
         adapter = this@RadarTab.adapter
         divider = android.graphics.drawable.ColorDrawable(Palette.GOLD_DIM); dividerHeight = 1
-        setOnItemClickListener { _, _, position, _ -> details(this@RadarTab.adapter.getItem(position)!!) }
+        setOnItemClickListener { _, _, position, _ -> val row = this@RadarTab.adapter.getItem(position)!!; choose(row.bssid); details(row) }
     }
 
     override val view: View = LinearLayout(context).apply {
@@ -208,7 +215,7 @@ internal class RadarTab(private val host: MainActivity) : Tab {
                 pings += heard
                 runCatching { PingStore.append(context, heard) }
                 host.say(if (fix.accuracy <= MAX_ACCURACY_M) "Zapisano ${heard.size} pingów (GPS ±${fix.accuracy.toInt()} m)."
-                         else "Zapisano ${heard.size} pingów, ale GPS jest słaby (±${fix.accuracy.toInt()} m): nie liczą się do położenia routerów.")
+                         else "Zapisano ${heard.size} pingów jako puste kółka. GPS ±${fix.accuracy.toInt()} m to za mało (potrzeba ±${MAX_ACCURACY_M.toInt()} m), więc nie przesuwają routerów.")
             } else host.say("Czekam na świeżą pozycję GPS, ten skan nie został zapisany.")
         } else if (fix == null) host.say("Brak pozycji GPS: włącz lokalizację i podejdź do okna.")
         show()
@@ -232,7 +239,7 @@ internal class RadarTab(private val host: MainActivity) : Tab {
         adapter.clear(); adapter.addAll(rows)
 
         val counts = rows.groupingBy { it.verdict.status }.eachCount()
-        val fix = location?.let { "GPS ±${it.accuracy.toInt()} m (${it.provider})" } ?: "brak pozycji GPS"
+        val fix = location?.let { weakGps(it)?.let { w -> "⚠ $w" } ?: "GPS ±${it.accuracy.toInt()} m (${it.provider}): dobry" } ?: "brak pozycji GPS"
         summary.text = Status.values().joinToString(" · ") { "${it.label}: ${counts[it] ?: 0}" } +
             "\nWidoczne teraz: ${seen.size} · pingi: ${pings.size} · routery na mapie: ${estimates.size}\n$fix · zapis: ${if (collecting) "włączony" else "wyłączony"}"
         pushMap(rows)
@@ -243,12 +250,14 @@ internal class RadarTab(private val host: MainActivity) : Tab {
         val data = JSONObject()
         location?.let { data.put("me", JSONObject().put("lat", it.latitude).put("lon", it.longitude).put("acc", it.accuracy.toDouble())) }
         if (location == null) data.put("waiting", "Czekam na GPS… Wyjdź bliżej okna albo na zewnątrz.")
+        location?.let(::weakGps)?.let { data.put("weak", it) }
+        data.put("selected", selected ?: JSONObject.NULL)
         val routers = JSONArray()
         val list = rows ?: (0 until adapter.count).map { adapter.getItem(it)!! }
         list.forEach { row ->
             val e = row.estimate ?: return@forEach
             val name = e.ssid.ifEmpty { "(ukryta sieć)" }
-            routers.put(JSONObject().put("lat", e.lat).put("lon", e.lon).put("r", e.radius)
+            routers.put(JSONObject().put("id", e.bssid).put("lat", e.lat).put("lon", e.lon).put("r", e.radius)
                 .put("color", hex(Palette.status(row.verdict.status)))
                 .put("label", "$name · ±${e.radius.toInt()} m · pewność ${e.confidence}"))
         }
@@ -258,7 +267,7 @@ internal class RadarTab(private val host: MainActivity) : Tab {
             list.filter { it.seen != null }.forEach { row ->
                 val ap = row.seen!!
                 val (lat, lon) = devicePosition(me.latitude, me.longitude, ap.bssid, ap.rssi)
-                devices.put(JSONObject().put("lat", lat).put("lon", lon).put("rssi", ap.rssi)
+                devices.put(JSONObject().put("id", ap.bssid).put("lat", lat).put("lon", lon).put("rssi", ap.rssi)
                     .put("color", hex(Palette.status(row.verdict.status)))
                     .put("label", "${ap.ssid.ifEmpty { "(ukryta sieć)" }} · ${ap.rssi} dBm · ok. ${rssiDistance(ap.rssi).toInt()} m"))
             }
@@ -273,7 +282,25 @@ internal class RadarTab(private val host: MainActivity) : Tab {
         }
     }
 
+    /** GPS too coarse for router positions: the words for the map and the summary, or null when it is fine. */
+    private fun weakGps(l: Location): String? = if (l.accuracy <= MAX_ACCURACY_M) null else
+        "GPS ±${l.accuracy.toInt()} m (${l.provider}): za słaby, potrzeba ±${MAX_ACCURACY_M.toInt()} m. Pingi się zapisują, ale nie liczą się do położenia. Podejdź do okna."
+
+    /** Marks one router: red and bigger on the map, highlighted in the list. The previous one goes back to normal. */
+    private fun choose(bssid: String?, fromMap: Boolean = false) {
+        selected = bssid
+        adapter.notifyDataSetChanged()
+        if (fromMap) {
+            val at = (0 until adapter.count).firstOrNull { adapter.getItem(it)!!.bssid == bssid }
+            if (at != null) list.smoothScrollToPosition(at)
+            val name = estimates[bssid]?.ssid ?: visible().firstOrNull { it.bssid == bssid }?.ssid
+            host.say("Zaznaczono: ${name.orEmpty().ifEmpty { "(ukryta sieć)" }}")
+        } else pushMap()
+    }
+
     private fun js(code: String) { if (mapReady) map.evaluateJavascript(code, null) }
+
+    private val SELECTED = 0xFFE53935.toInt()
 
     private fun hex(color: Int) = String.format("#%06X", 0xFFFFFF and color)
 
@@ -307,7 +334,7 @@ internal class RadarTab(private val host: MainActivity) : Tab {
         AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle((ap?.ssid ?: "").ifEmpty { "(ukryta sieć)" })
             .setMessage(text)
-            .apply { if (e != null) setPositiveButton("Pokaż na mapie") { _, _ -> js("aegis.focus(${e.lat}, ${e.lon})") } }
+            .apply { if (e != null) setPositiveButton("Pokaż na mapie") { _, _ -> js("aegis.focus(${e.lat}, ${e.lon}, ${JSONObject.quote(row.bssid)})") } }
             .setNeutralButton("Ciepło-zimno") { _, _ -> open(row.bssid, ap?.ssid.orEmpty()) }
             .setNegativeButton("Zamknij", null).show()
     }
