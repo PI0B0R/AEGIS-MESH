@@ -51,3 +51,15 @@ fun TextView.ink(color: Int = Palette.TEXT) { setTextColor(color) }
 
 /** Minimal ColorStateList helper for progress bars and inputs. */
 fun tint(color: Int): ColorStateList = ColorStateList.valueOf(color)
+
+fun priorityColor(p: Int) = when {
+    p >= 5 -> Palette.RED
+    p == 4 -> Palette.ORANGE
+    p == 3 -> Palette.GOLD
+    else -> Palette.MUTED
+}
+
+/** Rounded dark box with a thin gold edge, used for tiles and list rows. */
+fun panelBackground(edge: Int = Palette.GOLD_DIM) = GradientDrawable().apply {
+    cornerRadius = 22f; setColor(Palette.PANEL); setStroke(2, edge)
+}

@@ -9,9 +9,13 @@ android {
         applicationId 'pl.aegismesh.sensor'
         minSdk 26
         targetSdk 35
-        versionCode 2
-        versionName '0.2'
+        versionCode 3
+        versionName '0.5'
+        // The laptop's Tailscale Funnel address, e.g. https://aegis.example-tailnet.ts.net
+        // (gradle -PaegisUrl=... or the AEGIS_FUNNEL_URL repository variable in CI). Empty: the app asks or searches the LAN.
+        buildConfigField 'String', 'AEGIS_URL', '"' + (project.findProperty('aegisUrl') ?: '').toString().replace('"', '') + '"'
     }
+    buildFeatures { buildConfig true }
     // Shared DEBUG key (public, not a secret) so every CI build installs over the previous one.
     signingConfigs {
         debug {
@@ -29,7 +33,5 @@ android {
     kotlinOptions { jvmTarget = '17' }
 }
 dependencies {
-    // Google code scanner: QR without camera permission (needs Google Play services).
-    implementation 'com.google.android.gms:play-services-code-scanner:16.1.0'
     testImplementation 'junit:junit:4.13.2'
 }

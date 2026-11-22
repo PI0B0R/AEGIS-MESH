@@ -2,283 +2,215 @@ package pl.aegismesh.sensor
 
 import android.Manifest.permission.*
 import android.app.Activity
-import android.app.AlertDialog
-import android.content.*
+import android.content.Intent
 import android.content.pm.PackageManager.PERMISSION_GRANTED
-import android.graphics.Color
 import android.graphics.Typeface
-import android.net.wifi.WifiManager
 import android.os.*
 import android.text.InputType
+import android.view.Gravity
 import android.view.View
-import android.view.ViewGroup
-import android.view.ViewGroup.LayoutParams.*
-import android.webkit.*
+import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.*
-import com.google.mlkit.vision.barcode.common.Barcode
-import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
-import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
-import org.json.JSONObject
+import java.io.IOException
 
 /**
- * Main screen: pairing (QR or PIN), start/stop of the background sensor, manual place,
- * known-router list and a live list of nearby access points with their status.
- * Tapping a router opens the hot-cold finder. The laptop panel stays available as a WebView.
+ * AEGIS MESH on the phone: login, then three tabs (Pulpit, Alerty, Radar Wi-Fi).
+ *
+ * The server address is built into the APK (the laptop's Tailscale Funnel address). When it
+ * cannot be reached, the app looks for the server in the same Wi-Fi network. A long press on
+ * the logo on the login screen shows the address field ("inny serwer") for tests.
  */
-class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListener {
-    private val prefs by lazy { getSharedPreferences("sensor", MODE_PRIVATE) }
-    private val radio by lazy { applicationContext.getSystemService(WIFI_SERVICE) as WifiManager }
-    private val ticker = Handler(Looper.getMainLooper())
-    private lateinit var page: WebView
-    private lateinit var list: ListView
-    private lateinit var radar: RadarView
+class MainActivity : Activity() {
+    internal val session by lazy { Session(this) }
+    private val main = Handler(Looper.getMainLooper())
+    private lateinit var content: FrameLayout
     private lateinit var status: TextView
-    private lateinit var where: TextView
-    private lateinit var summary: TextView
-    private lateinit var toggle: Button
-    private lateinit var connect: Button
-    private lateinit var panel: Button
-    private lateinit var adapter: ArrayAdapter<Row>
-    private var pairing = false
-    private var startAfterGrant = false
-    private var lastOwnScan = 0L
-    private val permissions get() = mutableListOf(ACCESS_COARSE_LOCATION, ACCESS_FINE_LOCATION).also {
-        if (Build.VERSION.SDK_INT >= 33) { it.add(NEARBY_WIFI_DEVICES); it.add(POST_NOTIFICATIONS) }
-    }
-
-    private class Row(val ap: SeenAp, val verdict: Verdict)
+    private var tabs: List<Tab> = emptyList()
+    private var buttons: List<Button> = emptyList()
+    private var current = 0
+    private var askedWifi = false
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
-        val frame = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; fitsSystemWindows = true; setPadding(12, 12, 12, 0)
-            setBackgroundColor(Palette.BLACK) }
         window.statusBarColor = Palette.BLACK
         window.navigationBarColor = Palette.BLACK
-        frame.addView(TextView(this).apply { text = "◆ AEGIS MESH"; textSize = 20f; letterSpacing = 0.15f
-            setTypeface(typeface, Typeface.BOLD); ink(Palette.GOLD); setPadding(12, 4, 12, 8) })
-        connect = button("Połącz") { configure() }
-        toggle = button("") { toggleSensor() }.apply { gold() }
-        frame.addView(row(connect, toggle))
-        panel = button("Panel laptopa") { togglePanel() }
-        frame.addView(row(button("Miejsce") { editPlace() }, button("Znane routery") { importKnown() }, panel))
-        where = TextView(this).apply { setPadding(12, 8, 12, 0); setTypeface(typeface, Typeface.BOLD); ink(Palette.GOLD) }
-        status = TextView(this).apply { setPadding(12, 4, 12, 4); ink() }
-        summary = TextView(this).apply { setPadding(12, 0, 12, 8); ink(Palette.MUTED) }
-        frame.addView(where); frame.addView(status); frame.addView(summary)
-        radar = RadarView(this).apply { onPing = { openRadar(it.ap) } }
-        frame.addView(radar, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1.1f))
-        adapter = object : ArrayAdapter<Row>(this, android.R.layout.simple_list_item_2, android.R.id.text1, mutableListOf()) {
-            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                val view = super.getView(position, convertView, parent)
-                val item = getItem(position)!!
-                view.findViewById<TextView>(android.R.id.text1).apply {
-                    text = "● ${item.verdict.status.label} · ${item.ap.ssid.ifEmpty { "(ukryta sieć)" }} · ${item.ap.rssi} dBm"
-                    setTextColor(Palette.status(item.verdict.status))
-                }
-                view.findViewById<TextView>(android.R.id.text2).apply {
-                    text = "${item.ap.bssid} · ${securityMode(item.ap.flags)} · ${item.verdict.reason}"
-                    setTextColor(Palette.MUTED)
-                }
-                return view
+        current = intent.getIntExtra("tab", state?.getInt("tab") ?: 0)
+        if (session.loggedIn) showTabs() else showLogin(null)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (session.loggedIn && tabs.isNotEmpty()) select(intent.getIntExtra("tab", current))
+    }
+
+    override fun onSaveInstanceState(out: Bundle) { super.onSaveInstanceState(out); out.putInt("tab", current) }
+    override fun onResume() { super.onResume(); if (tabs.isNotEmpty()) tabs[current].refresh() }
+    override fun onPause() { tabs.forEach { it.stop() }; super.onPause() }
+
+    // ---- login -----------------------------------------------------------------------
+
+    private fun showLogin(message: String?) {
+        tabs.forEach { it.stop() }; tabs = emptyList()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; fitsSystemWindows = true
+            setBackgroundColor(Palette.BLACK); setPadding(56, 120, 56, 56)
+        }
+        val logo = TextView(this).apply {
+            text = "◆ AEGIS MESH"; textSize = 26f; letterSpacing = 0.15f; setTypeface(typeface, Typeface.BOLD)
+            ink(Palette.GOLD); gravity = Gravity.CENTER; setPadding(0, 0, 0, 48)
+        }
+        val start = session.origin.ifEmpty { Session.BUILT_IN }
+        val server = input("Adres serwera, np. https://aegis.twoja-siec.ts.net").apply {
+            setText(start); inputType = InputType.TYPE_TEXT_VARIATION_URI
+            visibility = if (start.isEmpty()) View.VISIBLE else View.GONE
+        }
+        val where = TextView(this).apply {
+            text = if (start.isEmpty()) "Brak adresu w aplikacji: wpisz go albo zostaw puste, żeby szukać w sieci Wi-Fi."
+                   else "Serwer: ${start.substringAfter("://")}"
+            ink(Palette.MUTED); textSize = 12f; gravity = Gravity.CENTER; setPadding(0, 0, 0, 24)
+        }
+        logo.setOnLongClickListener {
+            server.visibility = View.VISIBLE; where.text = "Inny serwer: wpisz adres albo zostaw puste, żeby szukać w sieci Wi-Fi."; true
+        }
+        val user = input("Login").apply { setText(session.username) }
+        val password = input("Hasło").apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }
+        status = TextView(this).apply { text = message.orEmpty(); ink(Palette.ORANGE); gravity = Gravity.CENTER; setPadding(0, 24, 0, 0) }
+        val go = Button(this).apply { text = "Zaloguj"; gold() }
+        go.setOnClickListener {
+            go.isEnabled = false; status.ink(Palette.MUTED); status.text = "Łączenie…"
+            work({ login(server.text.toString(), user.text.toString().trim(), password.text.toString()) }) { result ->
+                go.isEnabled = true
+                result.onSuccess { password.setText(""); afterLogin() }
+                    .onFailure { status.ink(Palette.ORANGE); status.text = it.localizedMessage ?: "Nie udało się zalogować." }
             }
         }
-        list = ListView(this).apply {
-            adapter = this@MainActivity.adapter
-            divider = android.graphics.drawable.ColorDrawable(Palette.GOLD_DIM); dividerHeight = 1
-            setOnItemClickListener { _, _, position, _ -> openRadar(this@MainActivity.adapter.getItem(position)!!.ap) }
+        listOf(logo, where, server, user, password).forEach { root.addView(it, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)) }
+        root.addView(go, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = 24 })
+        root.addView(status)
+        root.addView(TextView(this).apply {
+            text = "Konta zakłada administrator w panelu AEGIS MESH. Po 5 błędnych hasłach konto blokuje się na 15 minut."
+            ink(Palette.MUTED); textSize = 12f; gravity = Gravity.CENTER; setPadding(0, 48, 0, 0)
+        })
+        setContentView(ScrollView(this).apply { setBackgroundColor(Palette.BLACK); isFillViewport = true; addView(root) })
+    }
+
+    /** Tries the given address; if it cannot be reached (or none was given), looks for the server in the Wi-Fi network. */
+    private fun login(typed: String, username: String, password: String) {
+        require(username.isNotEmpty() && password.isNotEmpty()) { "Podaj login i hasło." }
+        val origin = typed.trim().takeIf { it.isNotEmpty() }?.let(::serverOrigin)
+        if (origin != null) {
+            try { session.login(origin, username, password); return }
+            catch (e: IOException) { main.post { status.text = "Serwer ${origin.substringAfter("://")} nie odpowiada. Szukam w sieci Wi-Fi…" } }
+        } else main.post { status.text = "Szukam serwera w sieci Wi-Fi…" }
+        val found = findInLan(this) ?: throw IOException(
+            "Nie znaleziono serwera. Sprawdź, czy laptop działa i czy telefon jest w tej samej sieci Wi-Fi (AEGIS_BIND=0.0.0.0).")
+        session.login(found, username, password)
+    }
+
+    private fun afterLogin() {
+        AlertJob.schedule(this)
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(POST_NOTIFICATIONS) != PERMISSION_GRANTED)
+            requestPermissions(arrayOf(POST_NOTIFICATIONS), 2)
+        showTabs()
+    }
+
+    private fun logout() {
+        AlertJob.cancel(this)
+        session.logout()
+        showLogin("Wylogowano.")
+    }
+
+    // ---- tabs --------------------------------------------------------------------------
+
+    private fun showTabs() {
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; fitsSystemWindows = true
+            setBackgroundColor(Palette.BLACK); setPadding(16, 12, 16, 0) }
+        root.addView(LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL; setPadding(8, 4, 8, 12)
+            addView(TextView(context).apply { text = "◆ AEGIS MESH"; textSize = 18f; letterSpacing = 0.15f
+                setTypeface(typeface, Typeface.BOLD); ink(Palette.GOLD) }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+            addView(TextView(context).apply { text = "${session.username} · ${session.role}"; ink(Palette.MUTED); setPadding(0, 0, 16, 0) })
+            addView(Button(context).apply { text = "Wyloguj"; gold(outline = true); setOnClickListener { logout() } })
+        })
+        status = TextView(this).apply { ink(Palette.MUTED); textSize = 12f; setPadding(8, 0, 8, 8); text = session.serverLabel }
+        root.addView(status)
+        content = FrameLayout(this)
+        root.addView(content, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        tabs = listOf(DashboardTab(this), AlertsTab(this), RadarTab(this))
+        buttons = listOf("Pulpit", "Alerty", "Radar Wi-Fi").mapIndexed { i, label ->
+            Button(this).apply { text = label; setOnClickListener { select(i) } }
         }
-        frame.addView(list, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
-        page = WebView(this).apply { visibility = View.GONE }
-        frame.addView(page, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
-        setContentView(frame)
-        page.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            setGeolocationEnabled(true)
-            allowFileAccess = false
-            allowContentAccess = false
-            javaScriptCanOpenWindowsAutomatically = false
+        root.addView(LinearLayout(this).apply {
+            setPadding(0, 8, 0, 8)
+            buttons.forEach { addView(it, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { setMargins(4, 0, 4, 0) }) }
+        })
+        setContentView(root)
+        select(current.coerceIn(0, tabs.size - 1))
+    }
+
+    private fun select(index: Int) {
+        tabs.forEach { it.stop() }
+        current = index
+        buttons.forEachIndexed { i, b -> b.gold(outline = i != index) }
+        content.removeAllViews()
+        content.addView(tabs[index].view, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        tabs[index].refresh()
+    }
+
+    // ---- helpers used by the tabs ------------------------------------------------------
+
+    /** Runs a network call off the main thread and hands the result back on it. */
+    internal fun <T> work(task: () -> T, done: (Result<T>) -> Unit) {
+        Thread {
+            val result = runCatching(task)
+            main.post { if (!isDestroyed) done(result) }
+        }.start()
+    }
+
+    internal fun say(text: String) { status.ink(Palette.MUTED); status.text = text }
+
+    /** An expired login goes back to the login screen; other errors are shown above the tab. */
+    internal fun fail(error: Throwable) {
+        if (error is HttpFailure && error.code == 401) {
+            AlertJob.cancel(this); session.forget(); showLogin("Sesja wygasła. Zaloguj się ponownie."); return
         }
-        page.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
-                !sameOrigin(request.url.toString())
-        }
-        page.webChromeClient = object : WebChromeClient() {
-            override fun onGeolocationPermissionsShowPrompt(origin: String, callback: GeolocationPermissions.Callback) {
-                callback.invoke(origin, sameOrigin(origin) && checkSelfPermission(ACCESS_FINE_LOCATION) == PERMISSION_GRANTED, false)
-            }
-        }
-        prefs.registerOnSharedPreferenceChangeListener(this)
-        update()
-        if (!prefs.contains("key")) status.text = "Połącz telefon z laptopem: Połącz → Skanuj QR albo wpisz adres i PIN."
-        if (state == null && permissions.any { checkSelfPermission(it) != PERMISSION_GRANTED })
-            requestPermissions(permissions.toTypedArray(), 1)
+        status.ink(Palette.ORANGE)
+        status.text = if (error is IOException) "Brak połączenia z serwerem ${session.serverLabel}." else error.localizedMessage
     }
 
-    private fun button(label: String, action: () -> Unit) = Button(this).apply { text = label; gold(outline = true); setOnClickListener { action() } }
-    private fun dialog() = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-    private fun openRadar(ap: SeenAp) = startActivity(Intent(this, HotColdActivity::class.java)
-        .putExtra("bssid", ap.bssid).putExtra("ssid", ap.ssid))
-    private fun row(vararg views: View) = LinearLayout(this).apply {
-        views.forEach { addView(it, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)) }
+    /** The Alerts tab saw these waiting findings, so the background check does not announce them again. */
+    internal fun markAnnounced(ids: List<String>) { session.announced = session.announced + ids }
+
+    internal fun askWifiPermissions() {
+        if (askedWifi) return
+        askedWifi = true
+        val wanted = mutableListOf(ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION)
+        if (Build.VERSION.SDK_INT >= 33) wanted += NEARBY_WIFI_DEVICES
+        requestPermissions(wanted.toTypedArray(), 1)
     }
 
-    override fun onResume() { super.onResume(); refresh() }
-    override fun onPause() { ticker.removeCallbacksAndMessages(null); super.onPause() }
-
-    /** Reads the cached scan every 5 s. When the service is off, asks for a new scan at most every 30 s. */
-    @Suppress("DEPRECATION")
-    private fun refresh() {
-        ticker.removeCallbacksAndMessages(null)
-        if (checkSelfPermission(ACCESS_FINE_LOCATION) == PERMISSION_GRANTED) {
-            if (!SensorService.live && SystemClock.elapsedRealtime() - lastOwnScan > SensorService.PERIOD_S * 1000) {
-                lastOwnScan = SystemClock.elapsedRealtime(); radio.startScan()
-            }
-            val known = loadKnown(this)
-            val rows = radio.scanResults.filter { it.BSSID != null }.map {
-                val ap = SeenAp(it.SSID.orEmpty(), it.BSSID.lowercase(), it.level, it.frequency, it.capabilities.orEmpty())
-                Row(ap, classify(ap, known))
-            }.sortedWith(compareBy<Row>({ it.verdict.status.rank }, { -it.ap.rssi }))
-            adapter.clear(); adapter.addAll(rows)
-            radar.pings = rows.map { RadarView.Ping(it.ap, it.verdict.status) }
-            val counts = rows.groupingBy { it.verdict.status }.eachCount()
-            summary.text = Status.values().joinToString(" · ") { "${it.label}: ${counts[it] ?: 0}" } +
-                " · lista znanych: ${known.size}"
-        } else summary.text = "Brak zgody na lokalizację: Android nie pokaże sieci Wi-Fi."
-        ticker.postDelayed(::refresh, 5000)
-    }
-
-    private fun sameOrigin(url: String) = runCatching { serverOrigin(url) == prefs.getString("origin", "") }.getOrDefault(false)
-
-    private fun scanQr(onText: (String) -> Unit) {
-        val options = GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build()
-        GmsBarcodeScanning.getClient(this, options).startScan()
-            .addOnSuccessListener { code -> code.rawValue?.let(onText) }
-            .addOnFailureListener { status.text = "Skaner QR niedostępny: " + it.localizedMessage }
-    }
-
-    /** One QR scanner for both kinds of codes: pairing links and door stickers with a place. */
-    private fun handleQr(text: String) {
-        val found = parsePlace(text)
-        if (found != null) { storePlace(prefs, found); update(); return }
-        runCatching { pairAddress(text, "") }.onFailure { status.text = it.localizedMessage }
-    }
-
-    private fun configure() {
-        val fields = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 8, 32, 8) }
-        val address = EditText(this).apply { hint = "Adres sesji telefonu"; setSingleLine(); setText(prefs.getString("origin", "")) }
-        val pin = EditText(this).apply { hint = "Jednorazowy PIN (8 cyfr)"; inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD }
-        fields.addView(address); fields.addView(pin)
-        dialog().setTitle("Połączenie z laptopem").setView(fields)
-            .setNeutralButton("Skanuj QR") { _, _ -> scanQr(::handleQr) }
-            .setNegativeButton("Anuluj", null).setPositiveButton("Połącz") { _, _ ->
-                runCatching { pairAddress(address.text.toString(), pin.text.toString()) }
-                    .onFailure { status.text = it.localizedMessage }
-            }.show()
-    }
-
-    private fun editPlace() {
-        val current = savedPlace(prefs)
-        val fields = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 8, 32, 8) }
-        fun field(hint: String, value: String?) = EditText(this).apply { this.hint = hint; setSingleLine(); setText(value.orEmpty()); fields.addView(this) }
-        val building = field("Budynek, np. B1", current?.building)
-        val floor = field("Piętro, np. 2", current?.floor)
-        val room = field("Sala, np. 215", current?.room)
-        dialog().setTitle("Gdzie jesteś?")
-            .setMessage("W budynku GPS zwykle nie działa. To miejsce dołączamy do raportów, gdy nie ma dobrego GPS.")
-            .setView(fields)
-            .setNeutralButton("QR z drzwi") { _, _ -> scanQr(::handleQr) }
-            .setNegativeButton("Wyczyść") { _, _ -> storePlace(prefs, null); update() }
-            .setPositiveButton("Zapisz") { _, _ ->
-                val value = place(building.text.toString(), floor.text.toString(), room.text.toString())
-                if (value == null) status.text = "Podaj co najmniej budynek (litery, cyfry, do 40 znaków)."
-                storePlace(prefs, value); update()
-            }.show()
-    }
-
-    private fun importKnown() {
-        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
-            .setType("*/*").putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("text/csv", "text/comma-separated-values", "text/plain")), 3)
+    override fun onRequestPermissionsResult(code: Int, names: Array<String>, results: IntArray) {
+        super.onRequestPermissionsResult(code, names, results)
+        if (code == 1 && tabs.isNotEmpty() && current == 2) tabs[2].refresh()
     }
 
     @Deprecated("Document picker result")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         val uri = data?.data
-        if (requestCode != 3 || resultCode != RESULT_OK || uri == null) return
+        if (requestCode != PICK_KNOWN || resultCode != RESULT_OK || uri == null) return
         runCatching {
             val bytes = contentResolver.openInputStream(uri)!!.use { it.readBytes() }
             require(bytes.size <= 1_000_000) { "Plik CSV jest większy niż 1 MB." }
-            val text = String(bytes, Charsets.UTF_8)
-            storeKnown(this, text)
-        }.onSuccess { status.text = "Wczytano znane routery: $it"; refresh() }
-            .onFailure { status.text = it.localizedMessage ?: "Nie udało się wczytać pliku CSV." }
+            storeKnown(this, String(bytes, Charsets.UTF_8))
+        }.onSuccess { say("Wczytano znane routery: $it") }.onFailure { status.ink(Palette.ORANGE); status.text = it.localizedMessage }
+        if (tabs.isNotEmpty() && current == 2) tabs[2].refresh()
     }
 
-    private fun pairAddress(address: String, pin: String) {
-        val origin = serverOrigin(address)
-        val invite = android.net.Uri.parse(address.trim()).fragment.orEmpty()
-        val body = JSONObject()
-        if (Regex("[0-9]{8}").matches(pin)) body.put("pin", pin)
-        else if (Regex("[A-Za-z0-9_-]{43}").matches(invite)) body.put("token", invite)
-        else throw IllegalArgumentException("Podaj ośmiocyfrowy PIN lub zeskanuj jednorazowy kod QR.")
-        pairing = true; update(); status.text = "Parowanie…"
-        Thread {
-            val result = runCatching { post(origin, "/exchange", body) }
-            runOnUiThread {
-                pairing = false
-                if (isDestroyed) return@runOnUiThread
-                result.onSuccess { data ->
-                    prefs.edit().putString("origin", origin).putString("key", data.getString("key"))
-                        .putString("scope", data.optString("scope", "AGH-LAB")).putString("status", "Sparowano z laptopem").apply()
-                }.onFailure { status.text = it.localizedMessage }
-                update()
-            }
-        }.start()
+    private fun input(hint: String) = EditText(this).apply {
+        this.hint = hint; setSingleLine(); ink(); setHintTextColor(Palette.MUTED); backgroundTintList = tint(Palette.GOLD)
     }
 
-    private fun togglePanel() {
-        val show = page.visibility != View.VISIBLE
-        if (show && !prefs.contains("key")) { status.text = "Najpierw połącz telefon z laptopem."; return }
-        if (show) page.loadUrl(prefs.getString("origin", "") + "/phone-beacon#apk=" + prefs.getString("key", ""))
-        page.visibility = if (show) View.VISIBLE else View.GONE
-        list.visibility = if (show) View.GONE else View.VISIBLE
-        radar.visibility = list.visibility
-        panel.text = if (show) "Lista sieci" else "Panel laptopa"
-    }
-
-    private fun toggleSensor() {
-        if (SensorService.live) {
-            stopService(Intent(this, SensorService::class.java))
-        } else if (permissions.any { checkSelfPermission(it) != PERMISSION_GRANTED }) {
-            startAfterGrant = true
-            requestPermissions(permissions.toTypedArray(), 1)
-        } else startForegroundService(Intent(this, SensorService::class.java))
-    }
-
-    override fun onRequestPermissionsResult(code: Int, names: Array<String>, results: IntArray) {
-        super.onRequestPermissionsResult(code, names, results)
-        if (code == 1 && startAfterGrant) {
-            startAfterGrant = false
-            if (checkSelfPermission(ACCESS_FINE_LOCATION) == PERMISSION_GRANTED) toggleSensor()
-            else status.text = "Do pomiaru potrzebna jest dokładna lokalizacja i dostęp do Wi-Fi."
-        }
-        refresh()
-    }
-
-    private fun update() {
-        val active = SensorService.live
-        toggle.text = if (active) "Zatrzymaj czujnik" else "Uruchom czujnik"
-        connect.isEnabled = !active && !pairing
-        connect.text = if (prefs.contains("key")) "Połączono ✓" else "Połącz"
-        toggle.isEnabled = !pairing
-        where.text = "Miejsce: " + (savedPlace(prefs)?.toString() ?: "nie ustawiono (tylko GPS)") + " · " + sensorId(prefs)
-        status.text = prefs.getString("status", "Czujnik gotowy")
-    }
-    override fun onSharedPreferenceChanged(p: SharedPreferences?, key: String?) { if (key == "status" || key == "active" || key == "key") runOnUiThread(::update) }
-    override fun onDestroy() {
-        prefs.unregisterOnSharedPreferenceChangeListener(this)
-        page.destroy()
-        super.onDestroy()
-    }
+    companion object { const val PICK_KNOWN = 3 }
 }

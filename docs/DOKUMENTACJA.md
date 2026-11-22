@@ -1,6 +1,6 @@
 # AEGIS MESH: dokumentacja techniczna
 
-Wersja 0.4.0. Dokument opisuje serwer, panel WWW i sieć testową. Instrukcja obsługi
+Wersja 0.5.0. Dokument opisuje serwer, panel WWW i sieć testową. Instrukcja obsługi
 krok po kroku jest w [`server/README.md`](../server/README.md), a pokaz dla jury w [`demo/pokaz.sh`](../demo/pokaz.sh).
 
 Spis treści:
@@ -21,7 +21,8 @@ Spis treści:
 14. [DefectDojo](#14-defectdojo)
 15. [Eksport i import](#15-eksport-i-import)
 16. [Testy](#16-testy)
-17. [Ograniczenia i dalsze kroki](#17-ograniczenia-i-dalsze-kroki)
+17. [Telefon i Tailscale Funnel](#17-telefon-i-tailscale-funnel)
+18. [Ograniczenia i dalsze kroki](#18-ograniczenia-i-dalsze-kroki)
 
 ## 1. Co robi system
 
@@ -378,7 +379,30 @@ edytowane. Pełny import dokłada dane do istniejących (np. przeniesienie na no
 GitHub Actions (`.github/workflows/server.yml`) uruchamia testy jednostkowe, a potem
 `docker compose` z DefectDojo, testy labu, testy w przeglądarce i skrypt pokazu.
 
-## 17. Ograniczenia i dalsze kroki
+## 17. Telefon i Tailscale Funnel
+
+Aplikacja na Androida (`android-app/`, szczegóły w [jej README](../android-app/README.md)) to dodatek
+na pokaz. Korzysta z tego samego API, logowania i ról co panel.
+
+| Zakładka | Zawartość |
+|---|---|
+| Pulpit | kafelki, ostatni i następny skan, „Co nowego”, „Skanuj teraz” (edytor, admin) |
+| Alerty | znaleziska 4–5, przycisk „Sprawdzone” (analityk i wyżej), powiadomienia co 15 minut |
+| Radar Wi-Fi | punkty dostępowe w pobliżu i radar ciepło-zimno, bez wysyłania danych |
+
+Połączenie z laptopem:
+
+- **Tailscale Funnel** (tryb główny): `tailscale funnel --bg 8000` daje stały adres
+  `https://aegis.<sieć>.ts.net` z darmowym certyfikatem. Adres jest wbudowany w APK
+  (zmienna repozytorium `AEGIS_FUNNEL_URL`). Telefon nie potrzebuje Tailscale.
+- **Sieć Wi-Fi** (tryb zapasowy): aplikacja przeszukuje swoją sieć /24 na porcie 8000
+  i rozpoznaje serwer po `GET /api/health` (`"service": "aegis-mesh"`). Wymaga `AEGIS_BIND=0.0.0.0`.
+- Ukryta opcja „inny serwer”: przytrzymanie logo na ekranie logowania.
+
+Funnel wystawia serwer do internetu, dlatego logowanie jest zawsze wymagane, `/api/health` podaje
+tylko nazwę, wersję i to, czy jest nmap, a tunel jest domyślnie wyłączony.
+
+## 18. Ograniczenia i dalsze kroki
 
 - Jeden serwer i jedna baza SQLite. Dla sieci rzędu /16 wystarcza, większe sieci warto
   dzielić na kilka instancji albo przejść na PostgreSQL.
@@ -386,4 +410,6 @@ GitHub Actions (`.github/workflows/server.yml`) uruchamia testy jednostkowe, a p
   baner nmapa i tytuł strony, a własną sygnaturę dodaje się w kilka sekund.
 - Skan UDP nie jest włączony (wolny i głośny w dużych sieciach).
 - Brak powiadomień e-mail; zmiany widać w panelu, w terminalu i w DefectDojo.
-- Etap 5: aplikacja na telefon korzystająca z tego samego API.
+- Blokada konta po 5 błędnych hasłach chroni przed zgadywaniem, ale przez Funnel ktoś może celowo
+  zablokować konto na 15 minut. Funnel warto włączać tylko na czas pokazu.
+- Powiadomienia w telefonie przychodzą co 15 minut (najkrótszy okres w Androidzie), nie od razu.

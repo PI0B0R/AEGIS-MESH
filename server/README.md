@@ -1,4 +1,4 @@
-# AEGIS MESH: serwer i panel (etapy 1–3)
+# AEGIS MESH: serwer i panel
 
 Serwer skanuje sieć programem nmap w bezpiecznych ustawieniach, zapisuje wyniki
 w bazie SQLite i pokazuje je przez API oraz komendy w terminalu. Wszystko działa
@@ -214,6 +214,12 @@ docker compose exec -T aegis aegis import full - < aegis-eksport.json         # 
 ```
 
 Import edycji zmienia tylko to, co różni się od obecnego stanu, i oznacza te pola jako „edytowane”.
+
+## Telefon
+
+Aplikacja na Androida loguje się tym samym kontem co panel. Adres laptopa daje Tailscale Funnel
+(`tailscale funnel --bg 8000`), a bez niego aplikacja szuka serwera w tej samej sieci Wi-Fi
+(wtedy `AEGIS_BIND=0.0.0.0`). Instrukcja: [android-app/README.md](../android-app/README.md).
 
 ## Szyfrowanie
 

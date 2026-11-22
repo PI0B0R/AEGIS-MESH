@@ -12,13 +12,8 @@ enum class Status(val label: String, val rank: Int) {
 data class KnownAp(val ssid: String, val bssid: String, val security: String)
 data class SeenAp(val ssid: String, val bssid: String, val rssi: Int, val frequency: Int, val flags: String)
 data class Verdict(val status: Status, val reason: String)
-data class Place(val building: String, val floor: String, val room: String) {
-    override fun toString() = listOf(building, floor.takeIf { it.isNotEmpty() }?.let { "piętro $it" },
-        room.takeIf { it.isNotEmpty() }?.let { "sala $it" }).filterNotNull().filter { it.isNotEmpty() }.joinToString(" · ")
-}
 
 private val MAC = Regex("(?:[0-9a-f]{2}:){5}[0-9a-f]{2}")
-private val PLACE_PART = Regex("[\\p{L}\\p{N} ._/-]{0,40}")
 private val HOTSPOT_NAME = Regex("(?i)^(iphone|android ?ap|direct-|galaxy|redmi|xiaomi|poco|huawei|honor|oneplus|moto|pixel|oppo|realme|vivo)|hotspot|tethering")
 
 /** Same names as the server's mobile_telemetry.security_mode, so both sides agree. */
@@ -105,20 +100,6 @@ private fun splitCsv(line: String): List<String> {
     }
     out.add(cell.toString().trim())
     return out
-}
-
-/** QR sticker on a door: "aegis-place:B1/2/215" (building/floor/room). */
-fun parsePlace(text: String): Place? {
-    val body = text.trim().takeIf { it.startsWith("aegis-place:", ignoreCase = true) }?.substringAfter(':') ?: return null
-    val parts = body.split('/').map { it.trim() }
-    if (parts.size > 3 || parts.any { !PLACE_PART.matches(it) }) return null
-    return place(parts.getOrElse(0) { "" }, parts.getOrElse(1) { "" }, parts.getOrElse(2) { "" })
-}
-
-fun place(building: String, floor: String, room: String): Place? {
-    val parts = listOf(building, floor, room).map { it.trim() }
-    if (parts[0].isEmpty() || parts.any { !PLACE_PART.matches(it) }) return null
-    return Place(parts[0], parts[1], parts[2])
 }
 
 /** Hot-cold hint from two RSSI readings in dBm. A 3 dB dead band hides normal jitter. */

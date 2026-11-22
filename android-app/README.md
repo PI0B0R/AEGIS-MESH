@@ -1,40 +1,68 @@
-# AEGIS Mesh na Androidzie
+# AEGIS MESH na Androidzie
 
-Telefon jest osobnym czujnikiem. Jego moduł GPS podaje miejsce odbioru sygnału. Laptop nadal może równolegle prowadzić własne pomiary.
+Telefon to dodatek do serwera AEGIS MESH, przydatny na pokazie: te same dane co panel WWW,
+powiadomienia o ważnych znaleziskach i radar Wi-Fi. Aplikacja korzysta z tego samego API
+co panel i komenda `aegis`, z tym samym logowaniem i rolami.
 
-## Instalacja i pierwszy pomiar
+## Trzy zakładki
 
-1. Na laptopie uruchom z katalogu `aegis-web` polecenie `python server.py --mobile-test --port 8772`. Jeżeli ten proces już działa, wystarczy otworzyć [panel parowania](http://127.0.0.1:8772/). Ta instancja zapisuje dane w tymczasowej bazie. Dla trwałej historii uruchom serwer z osobną bazą przez `--db` zamiast `--mobile-test`.
-2. W sekcji **Aplikacja telefonu · parowanie i kod QR** wybierz Cloudflare albo adres sieci LAN. Potwierdź parowanie, wygeneruj zaproszenie i odczytaj URL oraz ośmiocyfrowy PIN. Każda aplikacja wymaga osobnego parowania. Nowe zaproszenie w tej samej instancji zastępuje poprzednią sesję.
-3. Zainstaluj plik APK na Androidzie. Wybierz **Połącz**, potem **Skanuj QR** i zeskanuj kod z panelu laptopa. Możesz też wkleić adres sesji telefonu (może zawierać /phone-beacon), podać świeży PIN i wybrać **Połącz**. Po wymianie jednorazowego PIN-u aplikacja przechowuje w prywatnych preferencjach adres i klucz sesji. Panel WebView korzysta z tej samej sesji.
-4. Włącz w systemie lokalizację i Wi-Fi. Zezwól aplikacji na dokładną lokalizację i dostęp do urządzeń w pobliżu, a następnie wybierz **Uruchom czujnik**. W budynku ustaw najpierw **Miejsce**. Najłatwiej uzyskać pierwszy odczyt GPS na zewnątrz. Telefon zachowuje ostatni przyjęty punkt na mapie z czasem odczytu.
-5. Sprawdź komunikat **HTTP 200**, dokładność i liczbę wysłanych punktów. W panelu laptopa otwórz historię skanów Wi-Fi. Dwa punkty dostępowe z jednej paczki powinny mieć jeden identyfikator pomiaru i wspólną pinezkę czujnika. Zatrzymaj pomiar przyciskiem w aplikacji lub z powiadomienia Androida.
+| Zakładka | Co pokazuje |
+|---|---|
+| **Pulpit** | te same trzy kafelki co panel (aktywne hosty, zmiany, priorytet 4–5), ostatni i następny skan, „Co nowego”; edytor i admin mają też „Skanuj teraz” |
+| **Alerty** | znaleziska z priorytetem 4–5, najpierw te, które czekają; przycisk **Sprawdzone** (analityk i wyżej) zmienia ich status na `potwierdzone`; dotknięcie pokazuje szczegóły i powody |
+| **Radar Wi-Fi** | punkty dostępowe w pobliżu ze statusem *Podejrzany* / *Hotspot* / *Nowy* / *Znany* i radar ciepło-zimno; wszystko zostaje na telefonie |
 
-## Co robi aplikacja
+Co 15 minut (najkrótszy okres w Androidzie) aplikacja sprawdza w tle, czy pojawiły się nowe
+znaleziska 4–5 o statusie „nowe”, i pokazuje jedno powiadomienie. Dotknięcie otwiera zakładkę Alerty.
 
-Telefon jest czujnikiem radiowym, nie skanerem sieci. Widzi punkty dostępowe (SSID, BSSID, siła sygnału, zabezpieczenie), a nie komputery w sieci. Hosty wykrywa skaner na serwerze.
+## Logowanie i adres serwera
 
-- **Lista sieci w pobliżu.** Każdy punkt ma status: *Podejrzany* (znana nazwa z obcym BSSID i słabszym zabezpieczeniem, czyli możliwy evil twin, albo znany BSSID ze słabszym zabezpieczeniem), *Hotspot* (nazwa typu iPhone, AndroidAP, DIRECT-, MAC lokalnie administrowany), *Nowy* (brak na liście znanych) i *Znany*. Logika jest w `Radio.kt` i ma testy w `app/src/test`.
-- **Znane routery.** Przycisk wczytuje plik CSV `ssid,bssid,security`, ten sam format co `aegis-web/static/examples/inventory.csv`.
-- **Czujnik w tle.** Usługa pierwszoplanowa co 30 s prosi Androida o skan (system pozwala na około 4 skany na 2 minuty), wysyła tylko nowe wyniki i pokazuje powiadomienie o każdym nowym podejrzanym punkcie lub hotspocie. Każda instalacja ma własny identyfikator `PHONE-XXXXXXXX`.
-- **Miejsce.** W budynku GPS rzadko daje dokładność do 50 m. Wtedy raport dostaje budynek, piętro i salę wpisane ręcznie albo odczytane z kodu QR na drzwiach. Kody do druku generuje strona `/place-qr.html` serwera (treść kodu: `aegis-place:B1/2/215`). Przy dobrym GPS wysyłane są współrzędne i dodatkowo miejsce.
-- **Radar i ciepło-zimno.** Ekran główny ma czarno-złoty radar: każdy router to ping, im bliżej środka, tym silniejszy sygnał (kąt tylko rozsuwa pingi, Wi-Fi nie podaje kierunku). Dotknięcie pinga albo wiersza listy otwiera stożek ciepło-zimno: daleko jest szeroki i czerwony, blisko wąski i zielony. Siła sygnału jest wygładzana, bo pojedyncze odczyty skaczą o kilka dB. Dotknięcie pinga na górze stożka włącza tryb szybki (skan co 2 s). Android pozwala aplikacji na 4 skany w 2 minuty, więc żeby odczyt naprawdę przychodził co 2 s, wyłącz w opcjach programisty „Ograniczanie skanowania Wi-Fi”.
-- **Panel laptopa.** Mapa i alerty z serwera są w widoku WebView pod przyciskiem „Panel laptopa”.
+- Konto zakłada administrator w panelu (Ustawienia → Użytkownicy) albo `aegis users add`.
+  Samodzielnej rejestracji nie ma. Po 5 błędnych hasłach konto blokuje się na 15 minut,
+  a token wygasa po 12 godzinach. Aplikacja zapisuje tylko token, nigdy hasła.
+- **Tryb główny: Tailscale Funnel.** Adres laptopa (np. `https://aegis.twoja-siec.ts.net`) jest
+  wbudowany w APK. Telefon nie potrzebuje Tailscale.
+- **Tryb zapasowy: sieć Wi-Fi.** Gdy adres z APK nie odpowiada albo go nie ma, aplikacja sama
+  szuka serwera na porcie 8000 w tej samej sieci /24 (pyta `/api/health` każdego adresu, kilka sekund).
+  Serwer musi wtedy nasłuchiwać w sieci: `AEGIS_BIND=0.0.0.0 docker compose up -d`.
+- **Inny serwer:** przytrzymaj logo na ekranie logowania, żeby wpisać adres ręcznie.
 
-## Zasady pomiaru
+## Tailscale Funnel na laptopie (raz)
 
-- Pozycja GPS (`provider: gps`) musi mieć dokładność do 50 m i wiek do 15 s. Bez niej telefon wysyła `provider: manual` z polem `place` (`building`, `floor`, `room`). Serwer zapisuje miejsce w tabeli `place_fixes`, a w historii skanów pokazuje „Miejsce podane w telefonie”.
-- Tunel przyjmuje tylko SSID **AGH-LAB**. W prywatnym LAN przesyłane są wszystkie świeże wyniki.
-- Wersja **release** łączy się tylko przez HTTPS z certyfikatem zaufanym systemowo. Wersja **debug** (`src/debug/res/xml/network_security_config.xml`) pozwala też na HTTP w LAN i na lokalny certyfikat AEGIS-phone-ca.crt zainstalowany przez użytkownika. Tryb HTTP przesyła dane i klucz otwartym tekstem, więc używaj go tylko w zaufanej sieci testowej.
-- Serwer telefonu udostępnia `POST /exchange` i `POST /api/mobile-telemetry`. Żądanie zawiera nagłówki `Origin`, `Content-Type: application/json` i `Authorization: Bearer …`. Ten sam czas pozycji wysłany drugi raz nie powiela zapisu.
-- Kod QR skanuje Google Code Scanner (usługi Google Play, bez uprawnienia do aparatu). Ten sam przycisk rozpoznaje kod parowania z laptopa i naklejkę z miejscem.
+1. Zainstaluj Tailscale (darmowy plan osobisty, klient open source) i zaloguj się.
+2. W panelu Tailscale, zakładka **DNS**: włącz **HTTPS Certificates**. Nazwij komputer `aegis`.
+3. Uruchom serwer AEGIS (`docker compose up -d`), a potem w terminalu:
+   ```bash
+   tailscale funnel --bg 8000
+   tailscale funnel status          # pokazuje adres https://aegis.<twoja-siec>.ts.net
+   ```
+   Przy pierwszym uruchomieniu Tailscale poda link do zatwierdzenia Funnel.
+4. Wpisz ten adres do APK: w repozytorium na GitHubie **Settings → Secrets and variables →
+   Actions → Variables** dodaj zmienną `AEGIS_FUNNEL_URL`. Kolejna kompilacja w CI wbuduje go w aplikację.
+   Lokalnie: `./gradlew assembleDebug -PaegisUrl=https://aegis.twoja-siec.ts.net`.
+5. Wyłączenie: `tailscale funnel --bg 8000 off`. Tunel jest tylko na pokaz; jury go nie potrzebuje.
+
+Przez Funnel z internetu widać tylko ekran logowania panelu, `/api/health` (nazwa i wersja)
+i dokumentację API. Wszystko inne wymaga tokenu.
+
+## Bezpieczeństwo
+
+- Wersja **release** łączy się tylko przez HTTPS z certyfikatem zaufanym systemowo (Funnel ma
+  certyfikat Let's Encrypt). Wersja **debug**, którą buduje CI, pozwala też na HTTP, ale aplikacja
+  przyjmuje HTTP tylko dla prywatnych adresów IPv4 (tryb zapasowy w LAN).
+- Przyciski, do których rola nie ma prawa, są ukryte, a serwer i tak sprawdza rolę przy każdym zapytaniu.
+- Radar Wi-Fi nie wysyła nic na serwer. Do pokazania sieci Android wymaga zgody na lokalizację.
 
 ## Kompilacja
 
-Projekt wymaga JDK 17, Android SDK Platform 35 i Android SDK Build-Tools 34.0.0. Testy logiki radiowej uruchomisz poleceniem `.\gradlew.bat testDebugUnitTest`. Otwórz folder `android-app` w Android Studio albo ustaw `ANDROID_HOME` i wykonaj na Windows z tego katalogu:
+GitHub Actions (`.github/workflows/android-apk.yml`) uruchamia testy i buduje APK po każdej zmianie
+w `android-app/`. Z gałęzi `main` plik trafia do wydania **apk-latest**, z innych gałęzi do artefaktu
+`aegis-mesh-apk` w zakładce Actions.
 
-```powershell
-.\gradlew.bat assembleDebug
+Lokalnie potrzebne są JDK 17 i Android SDK Platform 35:
+
+```bash
+./gradlew testDebugUnitTest      # logika radia, adresy, wyszukiwanie w LAN, wygasanie tokenu
+./gradlew assembleDebug          # app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
-
-Gradle zapisuje podpisany kluczem debug plik w `app/build/outputs/apk/debug/app-debug.apk`. Pierwsza kompilacja pobiera zależności. Pakiet można również zainstalować z komputera poleceniem `adb install -r app/build/outputs/apk/debug/app-debug.apk`.
