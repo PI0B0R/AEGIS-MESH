@@ -55,7 +55,9 @@ def dojo_url():
 
 @pytest.fixture
 def client(data_dir, tmp_path, fake_nmap):
-    with TestClient(create_app(data_dir, tmp_path / "keys" / "k", background=False, run_chunk=fake_nmap)) as c:
+    app = create_app(data_dir, tmp_path / "keys" / "k", background=False, run_chunk=fake_nmap)
+    with TestClient(app) as c:
+        c.headers["Authorization"] = f"Bearer {app.state.cli_token}"
         yield c
 
 

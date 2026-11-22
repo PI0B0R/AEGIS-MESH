@@ -30,8 +30,14 @@ EXPECTED = {  # address -> (port, word that must appear in product or version)
 }
 
 
-def compose(*args: str, check: bool = True) -> None:
-    subprocess.run(["docker", "compose", *args], cwd=ROOT, check=check, capture_output=True)
+def compose(*args: str, check: bool = True) -> str:
+    return subprocess.run(["docker", "compose", *args], cwd=ROOT, check=check, capture_output=True, text=True).stdout
+
+
+def auth_headers() -> dict:
+    """AEGIS_TOKEN, or the terminal token from inside the server container (same as the `aegis` command uses)."""
+    token = os.environ.get("AEGIS_TOKEN") or compose("exec", "-T", "aegis", "cat", "/data/cli.token").strip()
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _scan(client: httpx.Client, timeout: float = 300) -> dict:
@@ -66,7 +72,8 @@ def lab():
 
 
 def test_scans_fingerprints_changes_unstable_hosts_and_edits(lab):
-    with httpx.Client(base_url=URL, timeout=60) as client:
+    with httpx.Client(base_url=URL, timeout=60, headers=auth_headers()) as client:
+        assert httpx.get(f"{URL}/api/findings").status_code == 401             # nothing without a login
         client.post("/api/targets", json={"text": "172.30.0.0/27", "note": "siec testowa"}).raise_for_status()
 
         # Scan 1: discovery and fingerprinting.

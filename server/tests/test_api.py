@@ -10,6 +10,7 @@ from aegis.api import create_app
 def client(data_dir, tmp_path, fake_nmap):
     app = create_app(data_dir, tmp_path / "keys" / "aegis.key", background=False, run_chunk=fake_nmap)
     with TestClient(app) as c:
+        c.headers["Authorization"] = f"Bearer {app.state.cli_token}"
         yield c
 
 
@@ -157,3 +158,20 @@ def test_stage2_findings_changes_signatures_export(client, fake_web, fake_nmap):
 
     reset = client.post(f"/api/findings/{fid}/reset", json={"fields": ["priority"]}).json()
     assert reset["priority"] == 5 and "priority" not in reset["edited"]
+
+
+def test_summary_shows_the_next_scheduled_scan(client):
+    client.post("/api/schedules", json={"template": "nocny"}).raise_for_status()
+    summary = client.get("/api/summary").json()
+    assert summary["next_scan"]["name"] == "Codziennie w nocy"
+    hour = int(summary["next_scan"]["at"][11:13])
+    assert hour >= 22 or hour < 6                                   # inside the night window
+
+
+def test_next_start_for_windows_and_intervals():
+    from datetime import datetime, timedelta
+    from aegis.scheduler import next_start, zone
+    noon = datetime(2026, 11, 23, 12, 2, tzinfo=zone())
+    assert next_start("daily", "22:00", "06:00", None, noon).hour == 22
+    assert next_start("every:6h", "00:00", "00:00", noon - timedelta(hours=1), noon) == noon.replace(hour=17, minute=5)
+    assert next_start("weekly:5", "22:00", "06:00", None, noon).weekday() == 5

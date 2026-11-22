@@ -19,9 +19,17 @@ so the terminal, the panel and the jury's scripts all go through the same code p
     aegis unstable                    unstable and inactive hosts
     aegis signatures list | test ... | add ... | delete ID
     aegis dojo check | send [--ids 1,2] [--min-priority 4] [--unsent]
-    aegis export [--format csv] [-o plik.csv]
+    aegis export [--format csv|full] [-o plik]
+    aegis import findings plik.csv | full eksport.json
+    aegis users list | add LOGIN --role edytor | role ID ROLA | password ID | disable ID | enable ID | unlock ID | delete ID
+    aegis audit                       who changed what
+
+Inside the server container the commands use the terminal token automatically.
+From another machine: AEGIS_URL=http://serwer:8000 AEGIS_TOKEN=... aegis ...
+(token from POST /api/auth/login).
 """
 import argparse
+import getpass
 import json
 import os
 import sys
@@ -32,10 +40,28 @@ import urllib.request
 from pathlib import Path
 
 
+def token() -> str | None:
+    """AEGIS_TOKEN, or the terminal token the server writes next to its database (inside the container)."""
+    if os.environ.get("AEGIS_TOKEN"):
+        return os.environ["AEGIS_TOKEN"]
+    path = Path(os.environ.get("AEGIS_DATA", "./data")) / "cli.token"
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+
+
+def headers() -> dict:
+    out = {"Content-Type": "application/json"}
+    if token():
+        out["Authorization"] = f"Bearer {token()}"
+    return out
+
+
 def call(method: str, path: str, body=None):
     base = os.environ.get("AEGIS_URL", "http://127.0.0.1:8000").rstrip("/")
     data = json.dumps(body).encode() if body is not None else None
-    request = urllib.request.Request(base + path, data=data, method=method, headers={"Content-Type": "application/json"})
+    request = urllib.request.Request(base + path, data=data, method=method, headers=headers())
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
             return json.loads(response.read() or b"null")
@@ -173,8 +199,25 @@ def main(argv=None) -> None:
     ds.add_argument("--unsent", action="store_true")
 
     ex = sub.add_parser("export", help="eksport znalezisk")
-    ex.add_argument("--format", choices=("json", "csv"), default="json")
+    ex.add_argument("--format", choices=("json", "csv", "full"), default="json")
     ex.add_argument("-o", "--output")
+
+    im = sub.add_parser("import", help="import edycji znalezisk albo pełny").add_subparsers(dest="action", required=True)
+    im.add_parser("findings", help="CSV/JSON z eksportu znalezisk").add_argument("file", help="ścieżka albo -")
+    im.add_parser("full", help="plik z export --format full").add_argument("file", help="ścieżka albo -")
+
+    us = sub.add_parser("users", help="użytkownicy i role").add_subparsers(dest="action", required=True)
+    us.add_parser("list")
+    ua = us.add_parser("add")
+    ua.add_argument("username")
+    ua.add_argument("--role", required=True, choices=("czytelnik", "analityk", "edytor", "admin"))
+    ua.add_argument("--password", help="bez tej opcji: zapytanie w terminalu")
+    ur = us.add_parser("role")
+    ur.add_argument("id", type=int)
+    ur.add_argument("role", choices=("czytelnik", "analityk", "edytor", "admin"))
+    for name in ("password", "disable", "enable", "unlock", "delete"):
+        us.add_parser(name).add_argument("id", type=int)
+    sub.add_parser("audit", help="dziennik zmian")
 
     args = parser.parse_args(argv)
 
@@ -248,6 +291,8 @@ def main(argv=None) -> None:
             show(call("PATCH", "/api/settings", body))
         else:
             show(call("GET", "/api/settings"))
+    elif admin_commands(args):
+        pass
     elif args.command == "summary":
         show(call("GET", "/api/summary"))
     elif args.command == "changes":
@@ -313,16 +358,69 @@ def main(argv=None) -> None:
                       f"produkt #{result['product_id']}). Aktywnych w teście: {total.get('active', '?')}.")
     elif args.command == "export":
         base = os.environ.get("AEGIS_URL", "http://127.0.0.1:8000").rstrip("/")
-        if args.format == "json":
+        if args.format == "full":
+            text = json.dumps(call("GET", "/api/export/full"), ensure_ascii=False, indent=2)
+        elif args.format == "json":
             text = json.dumps(call("GET", "/api/export/findings?format=json"), ensure_ascii=False, indent=2)
         else:
-            with urllib.request.urlopen(f"{base}/api/export/findings?format=csv", timeout=60) as response:
+            request = urllib.request.Request(f"{base}/api/export/findings?format=csv", headers=headers())
+            with urllib.request.urlopen(request, timeout=60) as response:
                 text = response.read().decode("utf-8")
         if args.output:
             Path(args.output).write_text(text, encoding="utf-8")
             print(f"Zapisano {args.output}")
         else:
             print(text)
+
+
+def _new_password(given: str | None) -> str:
+    if given:
+        return given
+    first = getpass.getpass("Hasło (min. 10 znaków): ")
+    if first != getpass.getpass("Powtórz hasło: "):
+        sys.exit("Hasła się różnią.")
+    return first
+
+
+def _read(path: str) -> tuple[str, str]:
+    if path == "-":
+        return sys.stdin.read(), ""
+    return Path(path).read_text(encoding="utf-8-sig"), Path(path).name
+
+
+def admin_commands(args) -> bool:
+    if args.command == "import":
+        content, name = _read(args.file)
+        if args.action == "findings":
+            r = call("POST", "/api/import/findings", {"content": content, "filename": name})
+            print(f"Zaktualizowano {r['updated']}, bez zmian {r['unchanged']}, nie znaleziono {len(r['not_found'])}.")
+        else:
+            r = call("POST", "/api/import/full", {"data": json.loads(content)})
+            print("Zaimportowano: " + ", ".join(f"{k} {v}" for k, v in r["imported"].items()))
+    elif args.command == "users":
+        if args.action == "list":
+            for u in call("GET", "/api/users")["users"]:
+                state = "wyłączone" if u["disabled"] else ("zablokowane" if u["locked_until"] else "aktywne")
+                print(f"{u['id']:>4}  {u['username']:<20} {u['role']:<10} {state:<12} ostatnio: {u['last_login'] or '-'}")
+        elif args.action == "add":
+            u = call("POST", "/api/users", {"username": args.username, "password": _new_password(args.password),
+                                            "role": args.role})
+            print(f"Założono konto {u['username']} ({u['role']}).")
+        elif args.action == "delete":
+            show(call("DELETE", f"/api/users/{args.id}"))
+        else:
+            body = {"role": {"role": getattr(args, "role", None)}, "password": {}, "disable": {"disabled": True},
+                    "enable": {"disabled": False}, "unlock": {"unlock": True}}[args.action]
+            if args.action == "password":
+                body = {"password": _new_password(None)}
+            u = call("PATCH", f"/api/users/{args.id}", body)
+            print(f"{u['username']}: rola {u['role']}, {'wyłączone' if u['disabled'] else 'aktywne'}.")
+    elif args.command == "audit":
+        for e in reversed(call("GET", "/api/audit?limit=100")["entries"]):
+            print(f"{e['at']}  {e['username'] or '-':<14} {e['action']:<40} {e['target'] or ''}")
+    else:
+        return False
+    return True
 
 
 if __name__ == "__main__":

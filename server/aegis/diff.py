@@ -10,6 +10,8 @@ from . import db as store
 
 DAYPARTS = (("noc", 0, 6), ("rano", 6, 12), ("popołudnie", 12, 18), ("wieczór", 18, 24))
 COMPARED = ("name", "product", "version", "tunnel")
+LABELS = {"name": "usługa", "product": "produkt", "version": "wersja", "tunnel": "TLS", "http_status": "kod HTTP",
+          "http_title": "tytuł strony"}
 
 
 def daypart(hour: int) -> str:
@@ -90,7 +92,8 @@ def compute(db, cipher, run_id: int, local_hour: int, unstable_after: int = 3) -
                         if before[key].get(k) != now[key].get(k)}
                 if diff:
                     f = _finding(db, cipher, ip, *key)
-                    what = ", ".join(f"{k}: {a} → {b}" for k, (a, b) in diff.items())
+                    what = ", ".join(f"{LABELS[k]} {a if a is not None else 'brak'} → {b if b is not None else 'brak'}"
+                                     for k, (a, b) in diff.items())
                     add("changed_service", ip, max(2, f["priority"] if f else 2),
                         f"Zmiana {ip}:{key[0]}/{key[1]}: {what}.", *key, detail=diff)
         db.execute("UPDATE hosts SET state='active', missed=0 WHERE ip=?", (ip,))
