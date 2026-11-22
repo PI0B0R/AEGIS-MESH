@@ -61,4 +61,17 @@ class LocateTest {
         assertEquals(rssiDistance(-67), d, 0.5)
         assertEquals(devicePosition(lat0, lon0, "aa:bb:cc:dd:ee:01", -67), devicePosition(lat0, lon0, "aa:bb:cc:dd:ee:01", -67))
     }
+
+    @Test fun aJumpToAnotherCityRightAfterAScanIsIgnored() {
+        val sec = 1_000_000_000L
+        // Bydgoszcz -> Kraków (about 300 km) in 5 s from the network provider: impossible
+        assertTrue(impossibleJump(53.1235, 18.0084, 0, 50.0647, 19.9234, 5 * sec, fromGps = false))
+        // the same jump reported by real GPS is believed
+        assertFalse(impossibleJump(53.1235, 18.0084, 0, 50.0647, 19.9234, 5 * sec, fromGps = true))
+        // walking 30 m, or a 800 m correction of a coarse fix, is fine
+        assertFalse(impossibleJump(53.1235, 18.0084, 0, 53.1238, 18.0084, 20 * sec, fromGps = false))
+        assertFalse(impossibleJump(53.1235, 18.0084, 0, 53.1307, 18.0084, 2 * sec, fromGps = false))
+        // a long train ride over hours is possible
+        assertFalse(impossibleJump(53.1235, 18.0084, 0, 50.0647, 19.9234, 4 * 3600 * sec, fromGps = false))
+    }
 }

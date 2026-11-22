@@ -48,6 +48,9 @@ internal class RadarTab(private val host: MainActivity) : Tab {
     /** Only a fix from the last 2 minutes counts: an old one is never drawn, saved or reported. */
     private val location: Location? get() = lastFix?.takeIf { ageSeconds(it) < 120 }
 
+    /** Why the last far-away fix was ignored, shown under the map. */
+    private var jumped: String? = null
+
     private fun ageSeconds(l: Location) = (SystemClock.elapsedRealtimeNanos() - l.elapsedRealtimeNanos) / 1_000_000_000L
     private val prefs = context.getSharedPreferences("aegis", Context.MODE_PRIVATE)
     private var collecting = prefs.getBoolean("radar_collect", true)
@@ -149,6 +152,12 @@ internal class RadarTab(private val host: MainActivity) : Tab {
     private val listener = object : LocationListener {
         override fun onLocationChanged(l: Location) {
             val old = location   // a stale fix is always replaced
+            if (old != null && impossibleJump(old.latitude, old.longitude, old.elapsedRealtimeNanos, l.latitude, l.longitude,
+                    l.elapsedRealtimeNanos, l.provider == LocationManager.GPS_PROVIDER)) {
+                jumped = "Pominięto pozycję z ${l.provider} o ${(metres(old.latitude, old.longitude, l.latitude, l.longitude) / 1000).toInt()} km dalej " +
+                    "(skok niemożliwy w tym czasie; pewnie routery przywiezione z innego miasta)."
+                return
+            }
             // keep the better fix when a coarse network fix arrives right after a GPS one; after 5 s any newer fix wins,
             // so the dot follows the phone while walking
             if (old == null || l.provider == LocationManager.GPS_PROVIDER || l.accuracy <= old.accuracy ||
@@ -266,7 +275,7 @@ internal class RadarTab(private val host: MainActivity) : Tab {
         val fix = location?.let { weakGps(it)?.let { w -> "⚠ $w" } ?: "GPS ±${it.accuracy.toInt()} m (${it.provider}): dobry" } ?: "szukam lokalizacji…"
         summary.text = Status.values().joinToString(" · ") { "${it.label}: ${counts[it] ?: 0}" } +
             "\nWidoczne teraz: ${seen.size} · pingi: ${pings.size} · routery na mapie: ${estimates.size} · znane (serwer): ${serverKnown.size}" +
-            "\n$fix · zapis: ${if (collecting) "włączony" else "wyłączony"}"
+            "\n$fix · zapis: ${if (collecting) "włączony" else "wyłączony"}" + jumped.orEmpty().let { if (it.isEmpty()) "" else "\n⚠ $it" }
         pushMap(rows)
     }
 
