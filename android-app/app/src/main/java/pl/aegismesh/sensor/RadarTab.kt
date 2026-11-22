@@ -41,7 +41,8 @@ internal class RadarTab(private val host: MainActivity) : Tab {
     private val ticker = Handler(Looper.getMainLooper())
     private var lastScan = 0L
     private var location: Location? = null
-    private var collecting = false
+    private val prefs = context.getSharedPreferences("aegis", Context.MODE_PRIVATE)
+    private var collecting = prefs.getBoolean("radar_collect", true)
     private var mapReady = false
     private var drawnPings = -1
     private val pings: MutableList<Ping> by lazy { PingStore.load(context) }
@@ -49,6 +50,10 @@ internal class RadarTab(private val host: MainActivity) : Tab {
 
     private val summary = TextView(context).apply { ink(Palette.MUTED); textSize = 13f; setPadding(8, 4, 8, 4) }
     private val collect = Button(context).apply { setOnClickListener { toggleCollecting() } }
+    private val enableGps = Button(context).apply {
+        text = "Włącz lokalizację w telefonie"; gold(); visibility = View.GONE
+        setOnClickListener { context.startActivity(Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     private val map = WebView(context).apply {
@@ -101,6 +106,7 @@ internal class RadarTab(private val host: MainActivity) : Tab {
             val b1 = button("Eksport CSV") { exportCsv() }; val b2 = button("Wyczyść") { confirmClear() }
             addView(b1, weighted(b1)); addView(b2, weighted(b2))
         })
+        addView(enableGps, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { setMargins(4, 2, 4, 2) })
         addView(summary)
         addView(map, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1.7f).apply { setMargins(0, 4, 0, 4) })
         addView(list, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
@@ -136,25 +142,41 @@ internal class RadarTab(private val host: MainActivity) : Tab {
             host.askWifiPermissions()
             return
         }
+        startLocation()
         if (!receiving) {
             val filter = IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION)
             if (android.os.Build.VERSION.SDK_INT >= 33) context.registerReceiver(scanDone, filter, Context.RECEIVER_NOT_EXPORTED)
             else context.registerReceiver(scanDone, filter)
-            for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
-                if (runCatching { gps.isProviderEnabled(provider) }.getOrDefault(false)) {
-                    gps.requestLocationUpdates(provider, 2_000L, 1f, listener, Looper.getMainLooper())
-                    if (location == null) gps.getLastKnownLocation(provider)?.let { location = it }
-                }
-            }
             receiving = true
         }
         tick()
+    }
+
+    private var listening = false
+
+    /**
+     * Location from every source the phone has switched on (GPS, network, fused), so the map finds the
+     * phone indoors too. With location switched off, a button opens the phone's location settings.
+     */
+    @SuppressLint("MissingPermission")
+    private fun startLocation() {
+        val sources = runCatching { gps.getProviders(true) }.getOrDefault(emptyList<String>()).filter { it != LocationManager.PASSIVE_PROVIDER }
+        enableGps.visibility = if (sources.isEmpty()) View.VISIBLE else View.GONE
+        if (listening || sources.isEmpty()) return
+        for (provider in sources) {
+            runCatching { gps.requestLocationUpdates(provider, 2_000L, 0f, listener, Looper.getMainLooper()) }
+            runCatching { gps.getLastKnownLocation(provider) }.getOrNull()?.let { l ->
+                if (location.let { it == null || l.time > it.time }) location = l
+            }
+        }
+        listening = true
     }
 
     /** Every 5 s: redraw from the cached scan; ask Android for a new scan at most every 30 s (its own limit is 4 per 2 min). */
     @Suppress("DEPRECATION")
     private fun tick() {
         if (SystemClock.elapsedRealtime() - lastScan > 30_000) { lastScan = SystemClock.elapsedRealtime(); radio.startScan() }
+        if (!listening) startLocation()
         show()
         ticker.postDelayed(::tick, 5_000)
     }
@@ -163,25 +185,32 @@ internal class RadarTab(private val host: MainActivity) : Tab {
         ticker.removeCallbacksAndMessages(null)
         if (receiving) {
             runCatching { context.unregisterReceiver(scanDone) }
-            runCatching { gps.removeUpdates(listener) }
             receiving = false
+        }
+        if (listening) {
+            runCatching { gps.removeUpdates(listener) }
+            listening = false
         }
     }
 
-    /** A new scan arrived: turn the beam and, while collecting, save one ping per router. */
+    /**
+     * A new scan arrived: turn the beam and save one ping per router heard (while "Zbieraj" is on, the default).
+     * Pings with weak GPS are kept and drawn hollow, but do not count for the router position.
+     */
     private fun onScan() {
         js("aegis.sweep()")
         val fix = location
         if (collecting && fix != null) {
-            val fresh = (SystemClock.elapsedRealtimeNanos() - fix.elapsedRealtimeNanos) < 30_000_000_000L
-            if (fresh && fix.accuracy <= MAX_ACCURACY_M) {
+            val ageNanos = SystemClock.elapsedRealtimeNanos() - fix.elapsedRealtimeNanos
+            if (ageNanos < 120_000_000_000L) {
                 val now = System.currentTimeMillis()
                 val heard = visible().map { Ping(now, fix.latitude, fix.longitude, fix.accuracy, it.bssid, it.ssid, it.rssi, it.frequency, it.flags) }
                 pings += heard
                 runCatching { PingStore.append(context, heard) }
-                host.say("Zapisano ${heard.size} pingów (GPS ±${fix.accuracy.toInt()} m).")
-            } else host.say("Pominięto skan: GPS za słaby (±${fix.accuracy.toInt()} m, potrzeba ±${MAX_ACCURACY_M.toInt()} m).")
-        }
+                host.say(if (fix.accuracy <= MAX_ACCURACY_M) "Zapisano ${heard.size} pingów (GPS ±${fix.accuracy.toInt()} m)."
+                         else "Zapisano ${heard.size} pingów, ale GPS jest słaby (±${fix.accuracy.toInt()} m): nie liczą się do położenia routerów.")
+            } else host.say("Czekam na świeżą pozycję GPS, ten skan nie został zapisany.")
+        } else if (fix == null) host.say("Brak pozycji GPS: włącz lokalizację i podejdź do okna.")
         show()
     }
 
@@ -203,9 +232,9 @@ internal class RadarTab(private val host: MainActivity) : Tab {
         adapter.clear(); adapter.addAll(rows)
 
         val counts = rows.groupingBy { it.verdict.status }.eachCount()
-        val fix = location?.let { "GPS ±${it.accuracy.toInt()} m" } ?: "brak GPS"
+        val fix = location?.let { "GPS ±${it.accuracy.toInt()} m (${it.provider})" } ?: "brak pozycji GPS"
         summary.text = Status.values().joinToString(" · ") { "${it.label}: ${counts[it] ?: 0}" } +
-            "\nPingi: ${pings.size} · routery na mapie: ${estimates.size} · $fix · znane routery: ${known.size}"
+            "\nWidoczne teraz: ${seen.size} · pingi: ${pings.size} · routery na mapie: ${estimates.size}\n$fix · zapis: ${if (collecting) "włączony" else "wyłączony"}"
         pushMap(rows)
     }
 
@@ -224,11 +253,22 @@ internal class RadarTab(private val host: MainActivity) : Tab {
                 .put("label", "$name · ±${e.radius.toInt()} m · pewność ${e.confidence}"))
         }
         data.put("routers", routers)
+        val devices = JSONArray()
+        location?.let { me ->
+            list.filter { it.seen != null }.forEach { row ->
+                val ap = row.seen!!
+                val (lat, lon) = devicePosition(me.latitude, me.longitude, ap.bssid, ap.rssi)
+                devices.put(JSONObject().put("lat", lat).put("lon", lon).put("rssi", ap.rssi)
+                    .put("color", hex(Palette.status(row.verdict.status)))
+                    .put("label", "${ap.ssid.ifEmpty { "(ukryta sieć)" }} · ${ap.rssi} dBm · ok. ${rssiDistance(ap.rssi).toInt()} m"))
+            }
+        }
+        data.put("devices", devices)
         js("aegis.update($data)")
         if (drawnPings != pings.size) {
             drawnPings = pings.size
             val dots = JSONArray()
-            pings.takeLast(3_000).forEach { dots.put(JSONArray().put(it.lat).put(it.lon).put(it.rssi)) }
+            pings.takeLast(3_000).forEach { dots.put(JSONArray().put(it.lat).put(it.lon).put(it.rssi).put(if (it.accuracy <= MAX_ACCURACY_M) 1 else 0)) }
             js("aegis.pings($dots)")
         }
     }
@@ -239,16 +279,17 @@ internal class RadarTab(private val host: MainActivity) : Tab {
 
     private fun toggleCollecting() {
         collecting = !collecting
+        prefs.edit().putBoolean("radar_collect", collecting).apply()
         showCollecting()
         if (collecting) {
             lastScan = 0L
-            host.say("Zbieram pingi. Chodź powoli po budynku; skan co ok. 30 s.")
+            host.say("Zapisuję pingi. Chodź powoli po budynku; skan co ok. 30 s.")
             ticker.removeCallbacksAndMessages(null); if (receiving) tick()
         } else host.say("Zbieranie zatrzymane. Pingi są zapisane na telefonie.")
     }
 
     private fun showCollecting() {
-        collect.text = if (collecting) "■ Stop" else "▶ Zbieraj"
+        collect.text = if (collecting) "■ Stop zapisu" else "▶ Zbieraj"
         collect.gold(outline = !collecting)
     }
 

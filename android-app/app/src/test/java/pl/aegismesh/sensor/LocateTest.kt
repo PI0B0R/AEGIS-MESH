@@ -44,4 +44,21 @@ class LocateTest {
     @Test fun closePingsCountAsOnePlace() {
         assertEquals(1, distinctPlaces(listOf(ping(0.0, -50), ping(2.0, -50), ping(4.0, -50))))
     }
+
+    @Test fun weakGpsPingsDoNotMoveTheEstimate() {
+        val good = ping(0.0, -50)
+        val bad = ping(200.0, -40, acc = 80f)
+        val e = estimate(listOf(good, bad)).single()
+        assertTrue(metres(lat0, lon0, e.lat, e.lon) < 1)
+        assertEquals(1, e.pings)
+        assertTrue(estimate(listOf(bad)).isEmpty())
+    }
+
+    @Test fun devicesAreDrawnAtTheirRoughDistance() {
+        assertTrue(rssiDistance(-45) < rssiDistance(-75))
+        val (lat, lon) = devicePosition(lat0, lon0, "aa:bb:cc:dd:ee:01", -67)
+        val d = metres(lat0, lon0, lat, lon)
+        assertEquals(rssiDistance(-67), d, 0.5)
+        assertEquals(devicePosition(lat0, lon0, "aa:bb:cc:dd:ee:01", -67), devicePosition(lat0, lon0, "aa:bb:cc:dd:ee:01", -67))
+    }
 }
