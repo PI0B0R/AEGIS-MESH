@@ -7,6 +7,9 @@
 
   var last = { routers: [], devices: [] }, selected = null;
   var follow = true, first = true, me = null, meRing = null, sweepMarker = null;
+  // the phone has its own panes above every other dot, so pings and devices around it never cover it
+  map.createPane('meRing').style.zIndex = 390;
+  map.createPane('me').style.zIndex = 650;
   var pingLayer = L.layerGroup().addTo(map);
   var routerLayer = L.layerGroup().addTo(map);
   var deviceLayer = L.layerGroup().addTo(map);
@@ -60,8 +63,9 @@
       if (data.me) {
         var at = [data.me.lat, data.me.lon];
         if (!me) {
-          me = L.circleMarker(at, { radius: 8, color: '#fff', weight: 2, fillColor: '#2b8cff', fillOpacity: 1 }).addTo(map);
-          meRing = L.circle(at, { radius: data.me.acc, color: '#2b8cff', weight: 1, dashArray: '3 5', fillOpacity: 0.04, interactive: false }).addTo(map);
+          meRing = L.circle(at, { pane: 'meRing', radius: data.me.acc, color: '#2b8cff', weight: 1.5, fillColor: '#2b8cff', fillOpacity: 0.08, interactive: false }).addTo(map);
+          me = L.circleMarker(at, { pane: 'me', radius: 9, color: '#fff', weight: 3, fillColor: '#2b8cff', fillOpacity: 1 })
+            .bindTooltip('Tu jesteś', { className: 'router-label' }).addTo(map);
         } else { me.setLatLng(at); meRing.setLatLng(at).setRadius(data.me.acc); }
         if (first) { map.setView(at, 18); first = false; } else if (follow) map.panTo(at);
         note.style.display = 'none';
