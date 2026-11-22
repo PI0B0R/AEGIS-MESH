@@ -81,7 +81,13 @@ def test_send_selected_findings_and_auto_export(client, fake_web, dojo_url, data
     assert RECEIVED[0]["path"] == "/api/v2/reimport-scan/" and form["scan_type"] == "Generic Findings Import"
     assert form["auto_create_context"] == "true" and form["product_name"] == "AEGIS MESH"
     entry = form["file"]["findings"][0]
-    assert entry["severity"] == "Info" and entry["verified"] and entry["unique_id_from_tool"] == "aegis:10.0.0.2:80/tcp"
+    assert entry["severity"] == "Info" and entry["verified"]
+    # the finding's own UUID and the scanner agent travel with it, so DefectDojo can deduplicate and trace it
+    sent = client.get(f"/api/findings/{top['id']}").json()
+    agent = client.get("/api/agents").json()["agents"][0]
+    assert entry["unique_id_from_tool"] == f"aegis:{sent['uid']}" and sent["agent_id"] == agent["id"]
+    assert f"agent:{agent['id'][:8]}" in entry["tags"] and sent["uid"] in entry["description"]
+    assert "Ostatni skan:" in entry["description"]
     assert "Panel logowania bez HTTPS" in entry["title"] and "zgłoszone do IT" in entry["description"]
     assert entry["endpoints"] == [{"host": "10.0.0.2", "port": 80, "protocol": "http"}]
     assert client.get(f"/api/findings/{top['id']}").json()["dojo_sent_at"]

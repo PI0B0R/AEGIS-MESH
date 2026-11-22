@@ -503,6 +503,8 @@ function findingBlock(f) {
       f.state !== "active" ? h("span", { class: "badge" }, "zniknęła") : null),
     h("div", {}, tags(f.tags)),
     h("p", { class: "muted small" }, `Status: ${f.status}. Technologie: ${tech(f.technologies) || "–"}.`),
+    f.uid ? h("p", { class: "muted small mono", title: "Unikalny identyfikator znaleziska i agent, który je zgłosił" },
+      `ID ${f.uid} · agent ${(f.agent_id || "–").slice(0, 8)}`) : null,
     f.note ? h("p", {}, "Notatka: ", f.note) : null),
     can("analityk") ? h("div", { class: "shrink actions" }, h("button", { type: "button", onclick: edit }, "Edytuj"),
       h("button", { type: "button", onclick: (e) => act(e.target, () => api("POST", "/api/dojo/send", { finding_ids: [f.id] }),
@@ -700,9 +702,36 @@ async function wifiScreen(view) {
           h("th", { class: "hide-sm" }, "Położenie"), h("th", { class: "hide-sm" }, "Ostatnio"), h("th", {}, "Notatka"), h("th", {}, ""))), body))));
 }
 
+/** Agents: every phone install and this server's scanner, each with a stable UUID that goes with its findings. */
+function agentsCard(list) {
+  const row = (a) => {
+    const name = h("td", {}, a.name, a.this_server ? h("span", { class: "badge" }, "ten serwer") : null,
+      a.revoked ? h("span", { class: "badge" }, "odwołany") : null);
+    const rename = () => {
+      const input = h("input", { id: `ag-${a.short}`, value: a.name, "aria-label": "Nazwa agenta" });
+      name.replaceChildren(input, h("div", { class: "actions" },
+        h("button", { class: "primary", type: "button", onclick: (e) => act(e.target, () => api("PATCH", `/api/agents/${a.id}`, { name: input.value }), "Zapisano.").then(route) }, "Zapisz"),
+        h("button", { type: "button", onclick: route }, "Anuluj")));
+      input.focus();
+    };
+    return h("tr", {}, name, h("td", {}, a.kind), h("td", { class: "mono small" }, a.id),
+      h("td", { class: "hide-sm small" }, when(a.last_seen), a.registered_by ? h("div", { class: "muted" }, a.registered_by) : null),
+      h("td", { class: "small" }, String(a.findings)),
+      h("td", {}, h("div", { class: "actions" }, h("button", { type: "button", onclick: rename }, "Nazwa"),
+        a.this_server ? null : h("button", { type: "button", onclick: (e) => act(e.target,
+          () => api("PATCH", `/api/agents/${a.id}`, { revoked: !a.revoked }), a.revoked ? "Agent znów może wysyłać dane." : "Agent odwołany.").then(route) },
+        a.revoked ? "Przywróć" : "Odwołaj"))));
+  };
+  return h("section", { class: "card" }, h("h2", {}, `Agenci (${list.length})`),
+    h("p", { class: "muted small" }, "Każdy telefon z aplikacją i skaner serwera mają stały identyfikator (UUID). Trafia on do każdego znaleziska i do DefectDojo (tag agent:…). Odwołany agent nie może już wysyłać danych."),
+    h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Nazwa"), h("th", {}, "Rodzaj"), h("th", {}, "ID"),
+      h("th", { class: "hide-sm" }, "Ostatnio"), h("th", {}, "Znaleziska"), h("th", {}, ""))), h("tbody", {}, list.map(row)))));
+}
+
 // ---- 5. Ustawienia (admin) ---------------------------------------------------------------
 async function settings(view) {
-  const [users, s, audit] = await Promise.all([api("GET", "/api/users"), api("GET", "/api/settings"), api("GET", "/api/audit?limit=50")]);
+  const [users, s, audit, agents] = await Promise.all([api("GET", "/api/users"), api("GET", "/api/settings"),
+    api("GET", "/api/audit?limit=50"), api("GET", "/api/agents")]);
   const name = h("input", { id: "nu-name", autocomplete: "off" });
   const pass = h("input", { id: "nu-pass", type: "password", autocomplete: "new-password" });
   const role = h("select", { id: "nu-role" }, users.roles.map((r) => h("option", { value: r, selected: r === "czytelnik" }, r)));
@@ -744,7 +773,8 @@ async function settings(view) {
   });
 
   view.replaceChildren(
-    h("div", { class: "head" }, h("div", {}, h("h1", {}, "Ustawienia"), h("p", { class: "muted" }, "Użytkownicy i role, DefectDojo, eksport i import. Widoczne tylko dla admina."))),
+    h("div", { class: "head" }, h("div", {}, h("h1", {}, "Ustawienia"), h("p", { class: "muted" }, "Użytkownicy i role, agenci, DefectDojo, eksport i import. Widoczne tylko dla admina."))),
+    agentsCard(agents.agents),
     h("section", { class: "card" }, h("h2", {}, "Użytkownicy i role"),
       h("p", { class: "muted small" }, "admin: wszystko · edytor: cele, sygnatury, skany · analityk: edycja znalezisk · czytelnik: tylko podgląd."),
       h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Login"), h("th", {}, "Rola"), h("th", {}, "Stan"),

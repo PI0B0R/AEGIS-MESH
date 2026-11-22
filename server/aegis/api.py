@@ -24,6 +24,7 @@ from .scheduler import TEMPLATES, Scheduler, validate
 from .api_admin import register as register_admin
 from .api_results import register as register_results
 from .api_wifi import register as register_wifi
+from .api_agents import register as register_agents
 from .targets import classify, parse_any, parse_text
 
 
@@ -467,6 +468,7 @@ def create_app(data_dir: str | os.PathLike | None = None, key_path: str | os.Pat
     register_results(app, conn, cipher, engine)
     register_admin(app, conn, cipher)
     register_wifi(app, conn, cipher)
+    register_agents(app, conn)
 
     panel = Path(__file__).with_name("panel")
     app.mount("/static", StaticFiles(directory=panel / "static"), name="static")

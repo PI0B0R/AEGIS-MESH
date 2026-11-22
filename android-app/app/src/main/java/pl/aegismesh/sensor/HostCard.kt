@@ -31,7 +31,8 @@ internal fun showFinding(context: android.content.Context, f: JSONObject, openHo
     val reasons = reasonList(f).joinToString("\n") { "• $it" }
     val text = listOfNotNull(findingPlace(f), "Status: ${f.optString("status")}",
         tech.takeIf { it.isNotEmpty() }?.let { "Technologie: $it" }, reasons.takeIf { it.isNotEmpty() }?.let { "Dlaczego:\n$it" },
-        f.text("note")?.let { "Notatka: $it" }).joinToString("\n\n")
+        f.text("note")?.let { "Notatka: $it" },
+        f.text("uid")?.let { "ID: $it" + (f.text("agent_id")?.let { a -> "\nAgent: $a" } ?: "") }).joinToString("\n\n")
     AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
         .setTitle("P${f.optInt("priority")} · ${f.optString("title")}").setMessage(text).setPositiveButton("OK", null)
         .apply { if (openHost != null) setNeutralButton("Karta hosta") { _, _ -> openHost(f.optString("ip")) } }

@@ -74,4 +74,16 @@ class LocateTest {
         // a long train ride over hours is possible
         assertFalse(impossibleJump(53.1235, 18.0084, 0, 50.0647, 19.9234, 4 * 3600 * sec, fromGps = false))
     }
+
+    @Test fun pingsCarryTheirOwnIdAndThePhonesAgentId() {
+        val p = ping(0.0, -50).copy(uid = "0b9c6a4e-1f2d-4c3b-8a7e-5d6c7b8a9f01", agent = "3f2b8c1e-6d4a-4b7e-9c2f-1a2b3c4d5e6f")
+        val back = parsePing(pingLine(p))!!
+        assertEquals(p.uid, back.uid); assertEquals(p.agent, back.agent)
+        assertTrue(PING_HEADER.endsWith(",uid,agent"))
+        // a line saved before ids existed gets a stable id from its own text
+        val old = "1000,50.0647000,19.9234000,5.0,aa:bb:cc:dd:ee:01,Biuro,-50,2437,[ESS]"
+        assertEquals(parsePing(old)!!.uid, parsePing(old)!!.uid)
+        assertEquals(36, parsePing(old)!!.uid.length)
+        assertEquals("", parsePing(old)!!.agent)
+    }
 }

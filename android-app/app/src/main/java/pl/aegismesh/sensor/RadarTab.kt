@@ -243,7 +243,9 @@ internal class RadarTab(private val host: MainActivity) : Tab {
             val ageNanos = SystemClock.elapsedRealtimeNanos() - fix.elapsedRealtimeNanos
             if (ageNanos < 120_000_000_000L) {
                 val now = System.currentTimeMillis()
-                val heard = visible().map { Ping(now, fix.latitude, fix.longitude, fix.accuracy, it.bssid, it.ssid, it.rssi, it.frequency, it.flags) }
+                val agent = host.session.agentId
+                val heard = visible().map { Ping(now, fix.latitude, fix.longitude, fix.accuracy, it.bssid, it.ssid, it.rssi, it.frequency, it.flags,
+                    java.util.UUID.randomUUID().toString(), agent) }
                 pings += heard
                 runCatching { PingStore.append(context, heard) }
                 host.say(if (fix.accuracy <= MAX_ACCURACY_M) "Zapisano ${heard.size} pingów (GPS ±${fix.accuracy.toInt()} m)."
@@ -275,7 +277,7 @@ internal class RadarTab(private val host: MainActivity) : Tab {
         val fix = location?.let { weakGps(it)?.let { w -> "⚠ $w" } ?: "GPS ±${it.accuracy.toInt()} m (${it.provider}): dobry" } ?: "szukam lokalizacji…"
         summary.text = Status.values().joinToString(" · ") { "${it.label}: ${counts[it] ?: 0}" } +
             "\nWidoczne teraz: ${seen.size} · pingi: ${pings.size} · routery na mapie: ${estimates.size} · znane (serwer): ${serverKnown.size}" +
-            "\n$fix · zapis: ${if (collecting) "włączony" else "wyłączony"}" + jumped.orEmpty().let { if (it.isEmpty()) "" else "\n⚠ $it" }
+            "\n$fix · zapis: ${if (collecting) "włączony" else "wyłączony"} · agent ${host.session.agentId.take(8)}" + jumped.orEmpty().let { if (it.isEmpty()) "" else "\n⚠ $it" }
         pushMap(rows)
     }
 
@@ -366,7 +368,7 @@ internal class RadarTab(private val host: MainActivity) : Tab {
             routers.put(o)
         }
         rememberAll.isEnabled = false
-        host.work({ host.session.api().post("/api/wifi/known", JSONObject().put("routers", routers)) }) { result ->
+        host.work({ host.session.api().post("/api/wifi/known", JSONObject().put("agent_id", host.session.agentId).put("routers", routers)) }) { result ->
             rememberAll.isEnabled = true
             result.onSuccess {
                 host.say("Zapamiętano ${it.optInt("saved")} routerów na serwerze (nowych: ${it.optInt("added")}). Od teraz obce sieci dadzą czerwoną flagę.")
@@ -390,11 +392,12 @@ internal class RadarTab(private val host: MainActivity) : Tab {
             estimates[ap.bssid]?.let { e -> o.put("lat", e.lat).put("lon", e.lon).put("radius", e.radius) }
             aps.put(o)
         }
-        val body = JSONObject().put("aps", aps)
+        val body = JSONObject().put("agent_id", host.session.agentId).put("aps", aps)
         location?.takeIf { SystemClock.elapsedRealtimeNanos() - it.elapsedRealtimeNanos < 120_000_000_000L }?.let {
             body.put("position", JSONObject().put("lat", it.latitude).put("lon", it.longitude).put("acc", it.accuracy.toDouble()))
         }
         host.work({ host.session.api().post("/api/wifi/report", body) }) { result ->
+            result.onFailure { if (it is HttpFailure && it.code == 403) host.fail(it) }
             result.onSuccess { data ->
                 val flags = data.optJSONArray("flags").objects()
                 if (flags.isNotEmpty()) host.say(if (flags.size == 1) "⚑ Czerwona flaga: ${flags[0].optString("title")}. Zobacz Alerty."

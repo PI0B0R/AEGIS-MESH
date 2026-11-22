@@ -35,6 +35,19 @@ internal class Session(context: Context) {
         prefs.edit().putString("origin", origin).putString("token", token).putString("expires", data.optString("expires_at"))
             .putString("username", me.optString("username", username)).putString("role", me.optString("role"))
             .putBoolean("can_analityk", me.optJSONObject("can")?.optBoolean("analityk") == true).apply()
+        // tell the server which phone this is (older servers without agents just answer 404)
+        runCatching {
+            Api(origin, token).post("/api/agents/register", JSONObject().put("id", agentId).put("kind", "telefon")
+                .put("name", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}".trim()))
+        }
+    }
+
+    /**
+     * This install's agent id: a UUID made on first use and kept until the app is removed (also across logins),
+     * so every ping and every red flag from this phone can be traced back to it.
+     */
+    val agentId: String get() = prefs.getString("agent_id", null) ?: java.util.UUID.randomUUID().toString().also {
+        prefs.edit().putString("agent_id", it).apply()
     }
 
     /** Ends the session on the server too (best effort) and forgets the token. The address stays. */

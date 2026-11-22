@@ -3,6 +3,7 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from . import db as store
+from . import agents
 from . import dojo
 from . import wifi
 
@@ -19,6 +20,7 @@ class RouterIn(BaseModel):
 
 
 class KnownIn(BaseModel):
+    agent_id: str | None = Field(None, description="Identyfikator telefonu (agenta), który zapamiętuje.")
     routers: list[RouterIn] = Field(..., max_length=2000)
     replace: bool = Field(False, description="Usuń znane routery, których nie ma na tej liście.")
 
@@ -40,6 +42,7 @@ class Position(BaseModel):
 
 
 class ReportIn(BaseModel):
+    agent_id: str | None = Field(None, description="Identyfikator telefonu (agenta); trafia do każdej czerwonej flagi.")
     position: Position | None = None
     aps: list[SeenIn] = Field(..., max_length=2000, description="Routery słyszane teraz (z oszacowanym położeniem, jeśli jest).")
 
@@ -59,7 +62,8 @@ def register(app: FastAPI, conn, cipher) -> None:
         db = conn()
         try:
             user = getattr(request.state, "user", None) or {}
-            return wifi.remember(db, [r.model_dump() for r in body.routers], user.get("username"), body.replace)
+            agent = agents.active(db, body.agent_id, user.get("username"))
+            return wifi.remember(db, [r.model_dump() for r in body.routers], user.get("username"), body.replace, agent)
         finally:
             db.close()
 
@@ -96,11 +100,13 @@ def register(app: FastAPI, conn, cipher) -> None:
 
     @app.post("/api/wifi/report", tags=["wi-fi"],
               summary="Telefon zgłasza, co słyszy; serwer porównuje ze znanymi i tworzy czerwone flagi (alerty)")
-    def report(body: ReportIn):
+    def report(request: Request, body: ReportIn):
         db = conn()
         try:
+            user = getattr(request.state, "user", None) or {}
+            agent = agents.active(db, body.agent_id, user.get("username"))
             result = wifi.report(db, cipher, [a.model_dump() for a in body.aps],
-                                 body.position.model_dump() if body.position else None)
+                                 body.position.model_dump() if body.position else None, agent)
             s = store.settings(db)
             if result["flags"] and s.get("dojo_auto") and s.get("dojo_url"):
                 try:

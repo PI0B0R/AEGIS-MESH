@@ -12,6 +12,8 @@ import kotlin.math.sqrt
 data class Ping(
     val time: Long, val lat: Double, val lon: Double, val accuracy: Float,
     val bssid: String, val ssid: String, val rssi: Int, val frequency: Int, val flags: String,
+    /** Unique id of this ping (UUID) and the id of the phone (agent) that took it. */
+    val uid: String = "", val agent: String = "",
 ) {
     val ap get() = SeenAp(ssid, bssid, rssi, frequency, flags)
 }
@@ -31,16 +33,20 @@ data class Estimate(
 /** Pings with GPS worse than this are kept and drawn, but left out of the router estimate: they would only blur it. */
 const val MAX_ACCURACY_M = 30f
 
-const val PING_HEADER = "time,lat,lon,accuracy_m,bssid,ssid,rssi_dbm,frequency_mhz,flags"
+const val PING_HEADER = "time,lat,lon,accuracy_m,bssid,ssid,rssi_dbm,frequency_mhz,flags,uid,agent"
 
 private fun quote(text: String) = if (text.any { it == ',' || it == '"' || it == '\n' }) "\"" + text.replace("\"", "\"\"").replace("\n", " ") + "\"" else text
 
 fun pingLine(p: Ping): String = listOf(p.time.toString(), "%.7f".format(java.util.Locale.ROOT, p.lat), "%.7f".format(java.util.Locale.ROOT, p.lon),
-    "%.1f".format(java.util.Locale.ROOT, p.accuracy), p.bssid, quote(p.ssid), p.rssi.toString(), p.frequency.toString(), quote(p.flags)).joinToString(",")
+    "%.1f".format(java.util.Locale.ROOT, p.accuracy), p.bssid, quote(p.ssid), p.rssi.toString(), p.frequency.toString(), quote(p.flags),
+    p.uid, p.agent).joinToString(",")
 
+/** Reads one CSV line. A ping saved before ids existed gets a UUID made from its own line, so it stays the same on every read. */
 fun parsePing(line: String): Ping? = runCatching {
     val c = splitCsv(line)
-    Ping(c[0].toLong(), c[1].toDouble(), c[2].toDouble(), c[3].toFloat(), c[4].lowercase(), c[5], c[6].toInt(), c[7].toInt(), c.getOrElse(8) { "" })
+    val uid = c.getOrNull(9).orEmpty().ifEmpty { java.util.UUID.nameUUIDFromBytes(line.toByteArray()).toString() }
+    Ping(c[0].toLong(), c[1].toDouble(), c[2].toDouble(), c[3].toFloat(), c[4].lowercase(), c[5], c[6].toInt(), c[7].toInt(),
+        c.getOrElse(8) { "" }, uid, c.getOrNull(10).orEmpty())
 }.getOrNull()
 
 /** Metres between two points; flat-earth is fine at building scale. */

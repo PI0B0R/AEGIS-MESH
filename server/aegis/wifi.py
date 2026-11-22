@@ -69,7 +69,7 @@ def known_list(db, cipher) -> list[dict]:
     return [known_row(r, cipher) for r in db.execute("SELECT * FROM wifi_known ORDER BY ssid, bssid")]
 
 
-def remember(db, routers: list[dict], user: str | None, replace: bool = False) -> dict:
+def remember(db, routers: list[dict], user: str | None, replace: bool = False, agent_id: str | None = None) -> dict:
     """Saves routers as known. An existing one gets the new position and signal; its note stays."""
     clean = []
     for r in routers:
@@ -90,12 +90,12 @@ def remember(db, routers: list[dict], user: str | None, replace: bool = False) -
         added += 0 if db.execute("SELECT 1 FROM wifi_known WHERE bssid=?", (r["bssid"],)).fetchone() else 1
         db.execute(
             "INSERT INTO wifi_known (bssid, ssid, security, frequency, rssi, lat, lon, radius, added_by, created_at, "
-            "updated_at, last_seen) VALUES (:bssid, :ssid, :security, :frequency, :rssi, :lat, :lon, :radius, :user, "
-            ":at, :at, :at) ON CONFLICT(bssid) DO UPDATE SET ssid=excluded.ssid, "
+            "updated_at, last_seen, agent_id) VALUES (:bssid, :ssid, :security, :frequency, :rssi, :lat, :lon, :radius, :user, "
+            ":at, :at, :at, :agent) ON CONFLICT(bssid) DO UPDATE SET ssid=excluded.ssid, agent_id=COALESCE(excluded.agent_id, agent_id), "
             "security=COALESCE(excluded.security, security), frequency=COALESCE(excluded.frequency, frequency), "
             "rssi=COALESCE(excluded.rssi, rssi), lat=COALESCE(excluded.lat, lat), lon=COALESCE(excluded.lon, lon), "
             "radius=COALESCE(excluded.radius, radius), updated_at=excluded.updated_at, last_seen=excluded.last_seen, "
-            "missed=0", {**r, "user": user, "at": moment})
+            "missed=0", {**r, "user": user, "at": moment, "agent": agent_id})
     # remembering a router answers its "new" and "evil twin" flags
     if clean:
         marks = ",".join("?" * len(clean))
@@ -107,7 +107,8 @@ def remember(db, routers: list[dict], user: str | None, replace: bool = False) -
 
 # ---- red flags ------------------------------------------------------------------------
 
-def _flag(db, cipher, mac: str, kind: str, title: str, reasons: list[str], ssid: str | None, seen: str) -> bool:
+def _flag(db, cipher, mac: str, kind: str, title: str, reasons: list[str], ssid: str | None, seen: str,
+          agent_id: str | None = None) -> bool:
     """Creates or refreshes one Wi-Fi finding. True when it is new or came back (worth announcing)."""
     priority = KINDS[kind]
     tech = [{"name": "Wi-Fi", "version": ssid or None, "category": "sieć bezprzewodowa"}]
@@ -120,9 +121,9 @@ def _flag(db, cipher, mac: str, kind: str, title: str, reasons: list[str], ssid:
     row = db.execute("SELECT id, state, edited FROM findings WHERE ip=? AND port=0 AND proto=?", (mac, kind)).fetchone()
     if row is None:
         db.execute("INSERT INTO findings (ip, port, proto, state, auto, technologies, tags, priority, title, reasons, "
-                   "first_seen, last_seen) VALUES (?, 0, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)",
+                   "first_seen, last_seen, agent_id) VALUES (?, 0, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                    (mac, kind, sealed["auto"], sealed["technologies"], json.dumps(["wifi", kind]), priority,
-                    sealed["title"], sealed["reasons"], seen, seen))
+                    sealed["title"], sealed["reasons"], seen, seen, agent_id))
         return True
     edited = set(json.loads(row["edited"]))
     values = {"state": "active", "auto": sealed["auto"], "technologies": sealed["technologies"],
@@ -137,7 +138,7 @@ def _settle(db, mac: str, kind: str) -> None:
     db.execute("UPDATE findings SET state='gone' WHERE ip=? AND port=0 AND proto=? AND state='active'", (mac, kind))
 
 
-def report(db, cipher, aps: list[dict], position: dict | None) -> dict:
+def report(db, cipher, aps: list[dict], position: dict | None, agent_id: str | None = None) -> dict:
     """Compares what one phone hears now with the baseline. Returns the flags that are new or came back."""
     known = {r["bssid"]: r for r in db.execute("SELECT * FROM wifi_known")}
     if not known:
@@ -186,7 +187,7 @@ def report(db, cipher, aps: list[dict], position: dict | None) -> dict:
                    f"Sygnał {ap.get('rssi')} dBm, zabezpieczenie {security or 'nieznane'}."]
             flags.append(("wifi-nowy", f"Nowy {what} {name(ssid)}", why))
         for kind, title, why in flags:
-            if _flag(db, cipher, mac, kind, title, why, ssid, seen_at):
+            if _flag(db, cipher, mac, kind, title, why, ssid, seen_at, agent_id):
                 raised.append({"bssid": mac, "ssid": ssid, "kind": kind, "priority": KINDS[kind], "title": title})
 
     if good_fix:
@@ -200,7 +201,7 @@ def report(db, cipher, aps: list[dict], position: dict | None) -> dict:
                 title = f"Znany router {name(r['ssid'])} zniknął"
                 why = [f"Telefon stał {GONE_NEAR_M} m od niego i nie słyszał go {missed} razy z rzędu.",
                        "Router mógł zostać wyłączony, zabrany albo uszkodzony."]
-                if _flag(db, cipher, mac, "wifi-zniknal", title, why, r["ssid"], seen_at):
+                if _flag(db, cipher, mac, "wifi-zniknal", title, why, r["ssid"], seen_at, agent_id):
                     raised.append({"bssid": mac, "ssid": r["ssid"], "kind": "wifi-zniknal", "priority": 4, "title": title})
     db.execute("COMMIT")
     return {"baseline": len(known), "flags": raised}

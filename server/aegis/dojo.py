@@ -99,6 +99,10 @@ def to_generic(finding: dict, evidence: dict | None) -> dict:
              f"Ostatnio: {finding['last_seen']}", "", "Dlaczego:", reasons or "- usługa wykryta skanem discovery"]
     if finding.get("note"):
         lines += ["", f"Notatka analityka: {finding['note']}"]
+    if finding.get("uid") or finding.get("agent_id"):
+        lines += ["", f"ID znaleziska AEGIS: {finding.get('uid') or '–'}", f"Agent: {finding.get('agent_id') or '–'}"]
+        if finding.get("scan_uid"):
+            lines.append(f"Ostatni skan: {finding['scan_uid']}")
     if evidence:
         lines += ["", "Dowody (HTTP):", f"- URL: {evidence.get('url')} → {evidence.get('status')}",
                   f"- Tytuł: {evidence.get('title')}", f"- Server: {evidence.get('server')}"]
@@ -114,14 +118,16 @@ def to_generic(finding: dict, evidence: dict | None) -> dict:
         "verified": finding["status"] == "potwierdzone",
         "false_p": finding["status"] == "fałszywy-alarm",
         "date": (finding["last_seen"] or "")[:10] or date.today().isoformat(),
-        "unique_id_from_tool": f"aegis:{finding['ip']}:{finding['port']}/{finding['proto']}",
+        # the finding's own UUID: stable across scans, so DefectDojo updates the same finding instead of adding one
+        "unique_id_from_tool": f"aegis:{finding['uid']}" if finding.get("uid") else f"aegis:{finding['ip']}:{finding['port']}/{finding['proto']}",
         "vuln_id_from_tool": (finding["reasons"][0]["signature"] if finding["reasons"] else "service"),
         "component_name": finding["technologies"][0]["name"] if finding["technologies"] else None,
         "component_version": finding["technologies"][0]["version"] if finding["technologies"] else None,
         # a BSSID is not a network host, so Wi-Fi flags have no endpoint (the BSSID is in the title)
         "endpoints": [] if wifi else [{"host": finding["ip"], "port": finding["port"], "protocol":
                                        (evidence or {}).get("scheme") or finding["proto"]}],
-        "tags": ["aegis-mesh", f"priorytet-{finding['priority']}", *finding["tags"]][:20],
+        "tags": ["aegis-mesh", f"priorytet-{finding['priority']}",
+                 *([f"agent:{finding['agent_id'][:8]}"] if finding.get("agent_id") else []), *finding["tags"]][:20],
     }
 
 
@@ -145,7 +151,8 @@ def send(db, cipher, finding_ids: list[int] | None = None, min_priority: int | N
         w = db.execute("SELECT data FROM web WHERE run_id=? AND ip=? AND port=? AND proto=?",
                        (f["last_run_id"], f["ip"], f["port"], f["proto"])).fetchone()
         evidence = json.loads(cipher.open(w["data"], "web.data")) if w else None
-        entries.append(to_generic(f, evidence))
+        scan = db.execute("SELECT uid FROM scan_runs WHERE id=?", (f["last_run_id"],)).fetchone() if f.get("last_run_id") else None
+        entries.append(to_generic({**f, "scan_uid": scan["uid"] if scan else None}, evidence))
     result = client.reimport({"findings": entries}, ["aegis-mesh"])
     sent_at, test_id = store.now(), result.get("test") or result.get("test_id")
     db.executemany("UPDATE findings SET dojo_sent_at=?, dojo_id=? WHERE id=?", [(sent_at, test_id, f["id"]) for f in rows])
