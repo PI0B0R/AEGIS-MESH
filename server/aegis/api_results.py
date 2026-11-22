@@ -44,8 +44,11 @@ class SignatureIn(BaseModel):
     status: list[int] | None = Field(None, description="Dla ścieżek: akceptowane kody HTTP (domyślnie 200, 401, 403).")
 
 
+PL = str.maketrans("ąćęłńóśźż", "acelnoszz")
+
+
 def _slug(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:40] or "sygnatura"
+    return re.sub(r"[^a-z0-9]+", "-", text.lower().translate(PL)).strip("-")[:40] or "sygnatura"
 
 
 def register(app: FastAPI, conn, cipher, engine) -> None:

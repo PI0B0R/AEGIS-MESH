@@ -50,7 +50,8 @@ const tech = (list) => (list || []).map((t) => (t.version ? `${t.name} ${t.versi
 function when(iso) {
   if (!iso) return "–";
   const d = new Date(iso);
-  return d.toLocaleString("pl-PL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  const year = d.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {};
+  return d.toLocaleString("pl-PL", { day: "numeric", month: "short", ...year, hour: "2-digit", minute: "2-digit" });
 }
 function seconds(s) {
   if (s === null || s === undefined) return "–";

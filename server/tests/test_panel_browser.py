@@ -27,9 +27,9 @@ def browser():
 def reader():
     token = httpx.post(f"{URL}/api/auth/login", json={"username": "admin", "password": ADMIN}).json()["token"]
     headers = {"Authorization": f"Bearer {token}"}
-    httpx.post(f"{URL}/api/users", json={"username": "jury-czytelnik", "password": "czytelnik-haslo-9", "role": "czytelnik"},
+    httpx.post(f"{URL}/api/users", json={"username": "lab-czytelnik", "password": "czytelnik-haslo-9", "role": "czytelnik"},
                headers=headers)
-    return "jury-czytelnik", "czytelnik-haslo-9"
+    return "lab-czytelnik", "czytelnik-haslo-9"
 
 
 def open_panel(browser, username, password):

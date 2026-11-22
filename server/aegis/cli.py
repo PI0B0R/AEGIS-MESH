@@ -115,6 +115,34 @@ def signature_body(args) -> dict:
             "tags": [t for t in args.tags.split(",") if t.strip()]}
 
 
+def summary_text(d: dict) -> str:
+    from datetime import datetime
+    from .scheduler import zone
+
+    def clock(iso):
+        return datetime.fromisoformat(iso).astimezone(zone()).strftime("%Y-%m-%d %H:%M") if iso else "-"
+    lines = [f"Aktywne hosty:        {d['active_hosts']}  (niestabilne {d['unstable_hosts']}, nieaktywne {d['inactive_hosts']})",
+             f"Zmiany po skanie:     {d['changes_since_last_scan']}",
+             f"Wysoki priorytet 4-5: {d['high_priority']}"]
+    last = d.get("last_scan")
+    if last:
+        lines.append(f"Ostatni skan:         #{last['id']} {last['status']}, {clock(last.get('finished_at'))}, "
+                     f"{last['hosts_up']}/{last['total_hosts']} adresów odpowiada")
+    if d.get("active_run"):
+        lines.append(f"Trwa skan:            #{d['active_run']}")
+    if d.get("paused_run"):
+        lines.append(f"Wstrzymany skan:      #{d['paused_run']}")
+    nxt = d.get("next_scan")
+    lines.append(f"Następny skan:        {clock(nxt['at'])} ({nxt['name']})" if nxt else "Następny skan:        brak harmonogramu")
+    return "\n".join(lines)
+
+
+def schedule_line(s: dict) -> str:
+    window = "bez okna" if s["window_start"] == s["window_end"] else f"okno {s['window_start']}-{s['window_end']}"
+    state = "" if s.get("enabled", True) else "  (wyłączony)"
+    return f"#{s['id']:<4} {s['name']}  [{s['frequency']}, {window}]{state}"
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(prog="aegis", description="AEGIS MESH: skaner discovery")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -158,7 +186,7 @@ def main(argv=None) -> None:
     sett = sub.add_parser("settings", help="pokaż lub zmień ustawienia skanu")
     sett.add_argument("pairs", nargs="*", help="klucz=wartość")
 
-    sub.add_parser("summary", help="kafelki pulpitu")
+    sub.add_parser("summary", help="kafelki pulpitu").add_argument("--json", action="store_true")
     ch = sub.add_parser("changes", help="co się zmieniło po skanie")
     ch.add_argument("--run", type=int)
     ch.add_argument("--min-priority", type=int, default=1)
@@ -274,12 +302,16 @@ def main(argv=None) -> None:
             for key, t in call("GET", "/api/schedules/templates").items():
                 print(f"{key:<12} {t['name']}  [{t['frequency']}, okno {t['window_start']}-{t['window_end']}]")
         elif args.action == "list":
-            show(call("GET", "/api/schedules"))
+            rows = call("GET", "/api/schedules")["schedules"]
+            for s in rows:
+                print(schedule_line(s))
+            if not rows:
+                print("Brak harmonogramu: skany tylko na żądanie.")
         elif args.action == "add":
             body = {"template": args.template, "name": args.name, "frequency": args.frequency}
             if args.window:
                 body["window_start"], body["window_end"] = args.window.split("-")
-            show(call("POST", "/api/schedules", {k: v for k, v in body.items() if v}))
+            print("Dodano: " + schedule_line(call("POST", "/api/schedules", {k: v for k, v in body.items() if v})))
         else:
             show(call("DELETE", f"/api/schedules/{args.id}"))
     elif args.command == "settings":
@@ -294,7 +326,11 @@ def main(argv=None) -> None:
     elif admin_commands(args):
         pass
     elif args.command == "summary":
-        show(call("GET", "/api/summary"))
+        data = call("GET", "/api/summary")
+        if args.json:
+            show(data)
+        else:
+            print(summary_text(data))
     elif args.command == "changes":
         query = f"?min_priority={args.min_priority}" + (f"&run_id={args.run}" if args.run else "")
         data = call("GET", "/api/changes" + query)
@@ -325,7 +361,8 @@ def main(argv=None) -> None:
     elif args.command == "unstable":
         for h in call("GET", "/api/hosts/unstable")["hosts"]:
             pattern = (h.get("daypart") or {}).get("pattern") or ""
-            print(f"{h['ip']:<16} {h['state']:<10} bez odpowiedzi: {h['missed']}  {pattern}")
+            state = {"unstable": "niestabilny", "inactive": "nieaktywny"}.get(h["state"], h["state"])
+            print(f"{h['ip']:<16} {state:<12} skany bez odpowiedzi: {h['missed']}  {pattern}")
     elif args.command == "signatures":
         if args.action == "list":
             data = call("GET", "/api/signatures")
