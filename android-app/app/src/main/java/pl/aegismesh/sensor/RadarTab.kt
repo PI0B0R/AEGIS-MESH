@@ -43,7 +43,12 @@ internal class RadarTab(private val host: MainActivity) : Tab {
     private val gps = context.getSystemService(LocationManager::class.java)
     private val ticker = Handler(Looper.getMainLooper())
     private var lastScan = 0L
-    private var location: Location? = null
+    /** The newest fix from any source, possibly old (Android keeps the last one, even from another city). */
+    private var lastFix: Location? = null
+    /** Only a fix from the last 2 minutes counts: an old one is never drawn, saved or reported. */
+    private val location: Location? get() = lastFix?.takeIf { ageSeconds(it) < 120 }
+
+    private fun ageSeconds(l: Location) = (SystemClock.elapsedRealtimeNanos() - l.elapsedRealtimeNanos) / 1_000_000_000L
     private val prefs = context.getSharedPreferences("aegis", Context.MODE_PRIVATE)
     private var collecting = prefs.getBoolean("radar_collect", true)
     private var mapReady = false
@@ -143,11 +148,11 @@ internal class RadarTab(private val host: MainActivity) : Tab {
 
     private val listener = object : LocationListener {
         override fun onLocationChanged(l: Location) {
-            val old = location
+            val old = location   // a stale fix is always replaced
             // keep the better fix when a coarse network fix arrives right after a GPS one; after 5 s any newer fix wins,
             // so the dot follows the phone while walking
             if (old == null || l.provider == LocationManager.GPS_PROVIDER || l.accuracy <= old.accuracy ||
-                l.elapsedRealtimeNanos - old.elapsedRealtimeNanos > 5_000_000_000L) location = l
+                l.elapsedRealtimeNanos - old.elapsedRealtimeNanos > 5_000_000_000L) lastFix = l
             pushMap()
         }
         @Deprecated("old API") override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
@@ -187,8 +192,11 @@ internal class RadarTab(private val host: MainActivity) : Tab {
         if (listening || sources.isEmpty()) return
         for (provider in sources) {
             runCatching { gps.requestLocationUpdates(provider, 1_000L, 0f, listener, Looper.getMainLooper()) }
+            // ask for a fresh fix right away instead of waiting for the next update
+            if (android.os.Build.VERSION.SDK_INT >= 30)
+                runCatching { gps.getCurrentLocation(provider, null, context.mainExecutor) { l -> if (l != null) listener.onLocationChanged(l) } }
             runCatching { gps.getLastKnownLocation(provider) }.getOrNull()?.let { l ->
-                if (location.let { it == null || l.time > it.time }) location = l
+                if (lastFix.let { it == null || l.elapsedRealtimeNanos > it.elapsedRealtimeNanos }) lastFix = l
             }
         }
         listening = true
@@ -255,7 +263,7 @@ internal class RadarTab(private val host: MainActivity) : Tab {
         adapter.clear(); adapter.addAll(rows)
 
         val counts = rows.groupingBy { it.verdict.status }.eachCount()
-        val fix = location?.let { weakGps(it)?.let { w -> "⚠ $w" } ?: "GPS ±${it.accuracy.toInt()} m (${it.provider}): dobry" } ?: "brak pozycji GPS"
+        val fix = location?.let { weakGps(it)?.let { w -> "⚠ $w" } ?: "GPS ±${it.accuracy.toInt()} m (${it.provider}): dobry" } ?: "szukam lokalizacji…"
         summary.text = Status.values().joinToString(" · ") { "${it.label}: ${counts[it] ?: 0}" } +
             "\nWidoczne teraz: ${seen.size} · pingi: ${pings.size} · routery na mapie: ${estimates.size} · znane (serwer): ${serverKnown.size}" +
             "\n$fix · zapis: ${if (collecting) "włączony" else "wyłączony"}"
@@ -266,7 +274,8 @@ internal class RadarTab(private val host: MainActivity) : Tab {
         if (!mapReady) return
         val data = JSONObject()
         location?.let { data.put("me", JSONObject().put("lat", it.latitude).put("lon", it.longitude).put("acc", it.accuracy.toDouble())) }
-        if (location == null) data.put("waiting", "Czekam na GPS… Wyjdź bliżej okna albo na zewnątrz.")
+        if (location == null) data.put("waiting", lastFix?.let { "Szukam aktualnej lokalizacji… Ostatnia pozycja jest sprzed ${ageSeconds(it) / 60} min, więc jej nie pokazuję." }
+            ?: "Szukam lokalizacji… Wyjdź bliżej okna albo na zewnątrz.")
         location?.let(::weakGps)?.let { data.put("weak", it) }
         data.put("selected", selected ?: JSONObject.NULL)
         val routers = JSONArray()
