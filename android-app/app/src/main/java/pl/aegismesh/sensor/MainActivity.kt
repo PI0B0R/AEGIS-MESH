@@ -168,6 +168,11 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    /** "Alerty (3)" on the tab button while 3 high-priority findings wait for someone. */
+    internal fun setAlertCount(waiting: Int) {
+        if (buttons.size > 1) buttons[1].text = if (waiting > 0) "Alerty ($waiting)" else "Alerty"
+    }
+
     internal fun say(text: String) { status.ink(Palette.MUTED); status.text = text }
 
     /** An expired login goes back to the login screen; other errors are shown above the tab. */
