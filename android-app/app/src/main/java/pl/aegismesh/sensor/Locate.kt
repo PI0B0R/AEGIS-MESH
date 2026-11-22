@@ -50,6 +50,21 @@ fun metres(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
     return sqrt(x * x + y * y)
 }
 
+/** Faster than this (m/s, about 250 km/h) a phone does not move: such a jump is a mistake of the location database. */
+const val MAX_SPEED_MS = 70.0
+
+/**
+ * A network or fused fix far away from the current one, sooner than anyone could get there. Android places the phone
+ * by the Wi-Fi routers around it; routers brought from another city still point to that city, so right after a Wi-Fi
+ * scan the position can jump hundreds of kilometres. Real GPS fixes are always believed.
+ */
+fun impossibleJump(oldLat: Double, oldLon: Double, oldNanos: Long, newLat: Double, newLon: Double, newNanos: Long, fromGps: Boolean): Boolean {
+    if (fromGps) return false
+    val distance = metres(oldLat, oldLon, newLat, newLon)
+    val seconds = maxOf(1.0, (newNanos - oldNanos) / 1e9)
+    return distance > 1_000 && distance / seconds > MAX_SPEED_MS
+}
+
 /** How many really different places (at least [gap] metres apart) the pings were taken from. */
 fun distinctPlaces(pings: List<Ping>, gap: Double = 5.0): Int {
     val spots = mutableListOf<Ping>()
