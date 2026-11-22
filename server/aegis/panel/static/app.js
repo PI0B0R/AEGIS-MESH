@@ -300,6 +300,49 @@ function chart(runs) {
 }
 
 // ---- 2. Cele --------------------------------------------------------------------------
+// Scope radar: prefixes the ASN announces in BGP (public RIPEstat data) against the target list.
+function scopeRadar(settings) {
+  const asn = h("input", { id: "bgp-asn", placeholder: "np. 8501", value: settings.bgp_asn ? String(settings.bgp_asn) : "",
+    inputmode: "numeric", "aria-label": "Numer ASN" });
+  const out = h("div", {});
+  const STATE = { pokryty: "p1", "częściowo": "p3", brak: "p4" };
+  const draw = (d) => {
+    const rows = d.prefixes.map((p) => h("tr", {},
+      h("td", { class: "mono" }, p.prefix), h("td", {}, h("span", { class: `prio ${STATE[p.state]}` }, p.state)),
+      h("td", {}, `${p.percent}%`), h("td", { class: "muted small" }, p.state !== "pokryty" && p.blocked ? p.blocked : "")));
+    out.replaceChildren(h("div", {},
+      d.stale ? h("p", { class: "muted" }, `Brak internetu: pokazuję odpowiedź z ${when(d.fetched_at)}.`) : null,
+      h("p", { class: "muted small" }, `AS${d.asn}: ${d.prefixes.length} prefiksów. Pokryte: ${d.counts.pokryty}, częściowo: ${d.counts["częściowo"]}, brak: ${d.counts.brak}.`),
+      rows.length ? h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, h("th", {}, "Prefiks"), h("th", {}, "Stan"), h("th", {}, "Pokrycie"), h("th", {}, ""))),
+        h("tbody", {}, rows))) : h("p", { class: "empty" }, "Ten ASN nic nie ogłasza."),
+      d.outside.length ? h("div", {}, h("h3", {}, "Cele poza przestrzenią tego ASN"),
+        h("ul", {}, d.outside.map((o) => h("li", {}, h("span", { class: "mono" }, o.value), ` – ${o.reason}`)))) : null,
+      d.to_import.length ? h("button", { class: "primary", type: "button", onclick: async (e) => {
+        const r = await act(e.target, () => api("POST", "/api/scope/bgp/import", { asn: String(d.asn) }));
+        if (r) { toast(`Dodano ${r.added.length} prefiksów (${r.addresses} adresów).`); route(); }
+      } }, `Dodaj brakujące jako cele (${d.to_import.length})`) : h("p", { class: "muted small" }, "Wszystkie prefiksy, które można dodać, są już celami.")));
+  };
+  const check = async (e) => {
+    const value = asn.value.trim();
+    const d = await act(e.target, async () => {
+      const result = await api("GET", `/api/scope/bgp?asn=${encodeURIComponent(value)}`);
+      if (String(settings.bgp_asn || "") !== String(result.asn)) {
+        await api("PATCH", "/api/settings", { bgp_asn: result.asn });
+        settings.bgp_asn = result.asn;
+      }
+      return result;
+    });
+    if (d) draw(d);
+  };
+  return h("section", { class: "card" }, h("h2", {}, "Radar zakresów (BGP)"),
+    h("p", { class: "muted small" }, "Porównuje prefiksy, które wybrany ASN ogłasza w internecie (publiczne dane RIPEstat), z listą celów. " +
+      "Pokazuje, czego brakuje i co leży poza siecią organizacji. Do RIPEstat trafia tylko numer ASN, nic nie jest skanowane."),
+    h("div", { class: "row" }, h("div", {}, h("label", { for: "bgp-asn" }, "Numer ASN"), asn),
+      h("div", { class: "shrink actions" }, h("button", { type: "button", onclick: check }, "Sprawdź"))),
+    out);
+}
+
 async function targets(view) {
   const [data, schedules, templates, settings] = await Promise.all([
     api("GET", "/api/targets"), api("GET", "/api/schedules"), api("GET", "/api/schedules/templates"),
@@ -352,6 +395,8 @@ async function targets(view) {
       h("thead", {}, h("tr", {}, h("th", {}, "Cel"), h("th", {}, "Rodzaj"), h("th", {}, "Adresy"), h("th", {}, "Notatka"),
         h("th", {}, "Aktywny"), can("edytor") ? h("th", {}, "") : null)),
       h("tbody", {}, rows))) : h("p", { class: "empty" }, "Brak celów.")));
+
+  if (settings) parts.push(scopeRadar(settings));
 
   const scheduleRows = schedules.schedules.map((s) => h("li", {},
     h("span", { class: "prio p1" }, s.window_start === s.window_end ? "24h" : "okno"),

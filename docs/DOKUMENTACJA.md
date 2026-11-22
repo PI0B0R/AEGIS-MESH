@@ -22,7 +22,8 @@ Spis treści:
 15. [Eksport i import](#15-eksport-i-import)
 16. [Testy](#16-testy)
 17. [Telefon i Tailscale Funnel](#17-telefon-i-tailscale-funnel)
-18. [Ograniczenia i dalsze kroki](#18-ograniczenia-i-dalsze-kroki)
+18. [Radar zakresów (BGP)](#18-radar-zakresów-bgp)
+19. [Ograniczenia i dalsze kroki](#19-ograniczenia-i-dalsze-kroki)
 
 ## 1. Co robi system
 
@@ -329,6 +330,7 @@ REST API z dokumentacją OpenAPI pod `/docs`. Wszystko poza `GET /api/health`,
 |---|---|
 | logowanie | `POST /api/auth/login`, `/logout`, `/password`, `GET /api/auth/me` |
 | cele | `GET/POST /api/targets`, `POST /api/targets/import`, `PATCH/DELETE /api/targets/{id}` |
+| radar zakresów | `GET /api/scope/bgp?asn=8501`, `POST /api/scope/bgp/import` |
 | skany | `POST /api/scans`, `GET /api/scans`, `/estimate`, `/{id}`, `/{id}/pause`, `/{id}/resume` |
 | harmonogram | `GET/POST /api/schedules`, `/templates`, `DELETE /api/schedules/{id}` |
 | pulpit | `GET /api/summary`, `/api/changes`, `/api/changes/history` |
@@ -402,7 +404,44 @@ Połączenie z laptopem:
 Funnel wystawia serwer do internetu, dlatego logowanie jest zawsze wymagane, `/api/health` podaje
 tylko nazwę, wersję i to, czy jest nmap, a tunel jest domyślnie wyłączony.
 
-## 18. Ograniczenia i dalsze kroki
+## 18. Radar zakresów (BGP)
+
+Dodatek 1. Odpowiada na pytanie: czy lista celów obejmuje całą sieć organizacji?
+Każda organizacja z własną adresacją ma numer systemu autonomicznego (ASN) i ogłasza
+w BGP swoje prefiksy (NLRI). Radar pobiera te prefiksy z publicznych danych RIPEstat
+(`announced-prefixes`, zbudowane z obserwacji kolektorów RIPE RIS) i porównuje je z celami.
+
+Dla każdego ogłaszanego prefiksu pokazuje stan:
+
+| Stan | Znaczenie |
+|---|---|
+| pokryty | wszystkie adresy prefiksu są w aktywnych celach |
+| częściowo | część adresów jest w celach (procent pokrycia) |
+| brak | żaden adres prefiksu nie jest skanowany |
+
+Osobno wypisuje cele leżące poza ogłaszaną przestrzenią (np. literówka w adresie albo
+sieć innej organizacji, której nie wolno skanować). Domen nie da się tak sprawdzić,
+więc są oznaczone do ręcznej weryfikacji.
+
+Brakujące prefiksy dodaje się jednym kliknięciem („Dodaj brakujące jako cele”), jednym
+poleceniem albo jednym zapytaniem API. Prefiks zawarty w innym brakującym prefiksie
+nie jest dodawany drugi raz. Prefiksów większych niż limit celu (/12 w IPv4, a więc
+praktycznie każdego prefiksu IPv6) nie da się dodać w całości: radar to zaznacza, a
+mniejszy fragment dodaje się ręcznie. Dodane cele mają źródło `bgp` i notatkę `AS<numer> (BGP)`.
+
+```bash
+docker compose exec aegis aegis scope bgp --asn 8501      # tabela pokrycia
+docker compose exec aegis aegis scope import --asn 8501   # dodaj wszystkie brakujące
+docker compose exec aegis aegis scope import --asn 8501 149.156.0.0/16   # albo wybrane
+```
+
+Bezpieczeństwo i prywatność: to jedyne miejsce, w którym serwer łączy się z zewnętrzną
+usługą, i robi to tylko na żądanie użytkownika (rola edytor lub wyższa). Do RIPEstat trafia
+wyłącznie numer ASN, nic nie jest skanowane. Bez internetu radar pokazuje ostatnią udaną
+odpowiedź dla tego samego ASN z dopiskiem, że jest nieaktualna; bez zapisanej odpowiedzi
+zwraca czytelny błąd 503. Numer ASN zapamiętuje się w ustawieniach (`bgp_asn`).
+
+## 19. Ograniczenia i dalsze kroki
 
 - Jeden serwer i jedna baza SQLite. Dla sieci rzędu /16 wystarcza, większe sieci warto
   dzielić na kilka instancji albo przejść na PostgreSQL.
@@ -413,3 +452,5 @@ tylko nazwę, wersję i to, czy jest nmap, a tunel jest domyślnie wyłączony.
 - Blokada konta po 5 błędnych hasłach chroni przed zgadywaniem, ale przez Funnel ktoś może celowo
   zablokować konto na 15 minut. Funnel warto włączać tylko na czas pokazu.
 - Powiadomienia w telefonie przychodzą co 15 minut (najkrótszy okres w Androidzie), nie od razu.
+- Radar zakresów widzi tylko prefiksy ogłaszane w BGP. Sieci wewnętrzne (10.x, 172.16.x, 192.168.x)
+  i adresy od dostawcy bez własnego ASN trzeba dodać jako cele ręcznie.

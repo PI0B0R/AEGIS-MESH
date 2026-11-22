@@ -5,6 +5,8 @@ so the terminal, the panel and the jury's scripts all go through the same code p
     aegis targets add 10.0.0.0/24 example.com
     aegis targets import cele.csv
     aegis targets list
+    aegis scope bgp [--asn 8501]      radar zakresów: prefiksy ogłaszane w BGP przez ASN kontra cele
+    aegis scope import [--asn 8501] [PREFIKS ...]   dodaj brakujące prefiksy jako cele
     aegis scan start [--wait]
     aegis scan list | show ID | pause ID | resume ID
     aegis hosts [--run ID]
@@ -137,6 +139,26 @@ def summary_text(d: dict) -> str:
     return "\n".join(lines)
 
 
+def scope_text(d: dict) -> str:
+    """The scope radar as plain lines for the terminal."""
+    c = d["counts"]
+    lines = [f"AS{d['asn']}: {len(d['prefixes'])} ogłaszanych prefiksów (źródło: {d['source']}, {d['fetched_at']})"]
+    if d.get("stale"):
+        lines.append(f"UWAGA: brak internetu, pokazuję ostatnią zapisaną odpowiedź. {d.get('error') or ''}".rstrip())
+    lines.append(f"Pokryte celami: {c['pokryty']}, częściowo: {c['częściowo']}, brak: {c['brak']}")
+    for p in d["prefixes"]:
+        extra = f"  ({p['blocked']})" if p["blocked"] and p["state"] != "pokryty" else ""
+        lines.append(f"  {p['state']:<10} {p['prefix']:<24} {p['percent']:>5}%{extra}")
+    if d["outside"]:
+        lines.append("Cele poza przestrzenią tego ASN:")
+        lines += [f"  {o['value']:<32} {o['reason']}" for o in d["outside"]]
+    if d["to_import"]:
+        lines.append(f"Do dodania jednym poleceniem (aegis scope import --asn {d['asn']}): {', '.join(d['to_import'])}")
+    else:
+        lines.append("Wszystkie ogłaszane prefiksy, które można dodać, są już celami.")
+    return "\n".join(lines)
+
+
 def schedule_line(s: dict) -> str:
     window = "bez okna" if s["window_start"] == s["window_end"] else f"okno {s['window_start']}-{s['window_end']}"
     state = "" if s.get("enabled", True) else "  (wyłączony)"
@@ -161,6 +183,14 @@ def main(argv=None) -> None:
     targets.add_parser("list")
     rm = targets.add_parser("delete")
     rm.add_argument("id", type=int)
+
+    scope = sub.add_parser("scope", help="radar zakresów (BGP)").add_subparsers(dest="action", required=True)
+    sb = scope.add_parser("bgp", help="porównaj prefiksy ogłaszane przez ASN z celami")
+    sb.add_argument("--asn", help="np. 8501 albo AS8501; bez tej opcji: z ustawień (bgp_asn)")
+    sb.add_argument("--json", action="store_true")
+    si = scope.add_parser("import", help="dodaj brakujące prefiksy ASN jako cele")
+    si.add_argument("prefixes", nargs="*", help="wybrane prefiksy; bez nich: wszystkie brakujące")
+    si.add_argument("--asn")
 
     scan = sub.add_parser("scan", help="skany").add_subparsers(dest="action", required=True)
     start = scan.add_parser("start", help="uruchom skan teraz")
@@ -271,6 +301,15 @@ def main(argv=None) -> None:
             print(f"Razem adresów do skanowania: {data['addresses']}")
         else:
             show(call("DELETE", f"/api/targets/{args.id}"))
+    elif args.command == "scope":
+        if args.action == "bgp":
+            query = f"?asn={urllib.parse.quote(args.asn)}" if args.asn else ""
+            data = call("GET", "/api/scope/bgp" + query)
+            show(data) if args.json else print(scope_text(data))
+        else:
+            result = call("POST", "/api/scope/bgp/import", {"asn": args.asn, "prefixes": args.prefixes or None})
+            print(f"AS{result['asn']}: dodano {len(result['added'])} prefiksów jako cele "
+                  f"({result['addresses']} adresów), duplikaty: {result['duplicates']}.")
     elif args.command == "scan":
         if args.action == "start":
             run = call("POST", "/api/scans")

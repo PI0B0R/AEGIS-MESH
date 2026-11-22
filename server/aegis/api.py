@@ -2,6 +2,7 @@
 
 Every API route needs a login token (see auth.py for roles). The panel is served at /.
 """
+import ipaddress
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -14,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from . import __version__
 from . import auth
+from . import bgp
 from . import db as store
 from . import dojo
 from .crypto import FieldCipher
@@ -21,7 +23,7 @@ from .engine import Engine
 from .scheduler import TEMPLATES, Scheduler, validate
 from .api_admin import register as register_admin
 from .api_results import register as register_results
-from .targets import parse_any, parse_text
+from .targets import classify, parse_any, parse_text
 
 
 class TargetsIn(BaseModel):
@@ -59,6 +61,12 @@ class SettingsPatch(BaseModel):
     dojo_product: str | None = None
     dojo_auto: bool | None = Field(None, description="Po każdym skanie wysyłaj nowe ważne znaleziska.")
     dojo_min_priority: int | None = Field(None, ge=1, le=5)
+    bgp_asn: int | None = Field(None, ge=1, le=4294967295, description="ASN do radaru zakresów, np. 8501.")
+
+
+class BgpImportIn(BaseModel):
+    asn: str | None = Field(None, description="ASN, np. 8501 albo AS8501. Puste = z ustawień.", examples=["AS8501"])
+    prefixes: list[str] | None = Field(None, description="Wybrane prefiksy. Puste = wszystkie brakujące.")
 
 
 class DojoSendIn(BaseModel):
@@ -230,6 +238,58 @@ def create_app(data_dir: str | os.PathLike | None = None, key_path: str | os.Pat
         finally:
             db.close()
 
+    # ---- scope radar (BGP) ---------------------------------------------------------
+    app.state.bgp_download = bgp._download            # tests replace it with a fake RIPEstat
+
+    def _bgp_scope(asn_text: str | None) -> dict:
+        db = conn()
+        try:
+            s = store.settings(db)
+            if not asn_text and not s.get("bgp_asn"):
+                raise ValueError("Podaj numer ASN, np. 8501, albo zapisz go w ustawieniach (bgp_asn).")
+            asn = bgp.parse_asn(asn_text or s["bgp_asn"])
+            last = s.get("bgp_last") or {}
+            stale, error = False, None
+            try:
+                prefixes = bgp.fetch_prefixes(asn, download=app.state.bgp_download)
+                fetched_at = store.now()
+                store.save_setting(db, "bgp_last", {"asn": asn, "prefixes": prefixes, "fetched_at": fetched_at})
+            except bgp.BgpUnavailable as failure:
+                if last.get("asn") != asn:
+                    raise HTTPException(503, f"{failure} Sprawdź internet i spróbuj ponownie.") from None
+                prefixes, fetched_at, stale, error = last["prefixes"], last["fetched_at"], True, str(failure)
+            rows = [dict(r) for r in db.execute("SELECT kind, value, enabled FROM targets ORDER BY id")]
+            result = bgp.compare(asn, prefixes, rows)
+            result.update(source="RIPEstat announced-prefixes", fetched_at=fetched_at, stale=stale, error=error)
+            return result
+        finally:
+            db.close()
+
+    @app.get("/api/scope/bgp", tags=["cele"],
+             summary="Radar zakresów: prefiksy ogłaszane w BGP przez ASN kontra lista celów")
+    def scope_bgp(asn: str | None = None):
+        return _bgp_scope(asn)
+
+    @app.post("/api/scope/bgp/import", tags=["cele"],
+              summary="Dodaj brakujące prefiksy ASN jako cele (wszystkie albo wybrane)")
+    def scope_bgp_import(body: BgpImportIn):
+        scope = _bgp_scope(body.asn)
+        announced = {p["prefix"]: p for p in scope["prefixes"]}
+        if body.prefixes is None:
+            chosen = scope["to_import"]
+        else:
+            chosen = []
+            for raw in body.prefixes:
+                prefix = str(ipaddress.ip_network(raw.strip(), strict=False))
+                if prefix not in announced:
+                    raise ValueError(f"AS{scope['asn']} nie ogłasza prefiksu {raw}.")
+                if announced[prefix]["blocked"]:
+                    raise ValueError(f"Prefiks {prefix} jest {announced[prefix]['blocked']}.")
+                chosen.append(prefix)
+        result = _save_targets([classify(p) for p in chosen], "bgp", f"AS{scope['asn']} (BGP)")
+        result["asn"], result["stale"] = scope["asn"], scope["stale"]
+        return result
+
     # ---- scans -------------------------------------------------------------------
     @app.post("/api/scans", tags=["skany"], summary="Uruchom skan teraz")
     def start_scan():
@@ -317,6 +377,7 @@ def create_app(data_dir: str | os.PathLike | None = None, key_path: str | os.Pat
     # ---- settings ----------------------------------------------------------------
     def _public_settings(db) -> dict:
         values = store.settings(db)
+        values.pop("bgp_last", None)                                   # cache, not a setting
         for key in SECRET_SETTINGS:
             values[key] = "********" if values.get(key) else None      # secrets are never returned
         return values

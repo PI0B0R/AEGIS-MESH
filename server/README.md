@@ -78,6 +78,14 @@ docker compose exec aegis aegis targets list
 CSV może mieć nagłówek (`cel`/`target`/`ip`… oraz `notatka`/`note`) albo nie mieć go wcale.
 JSON to lista adresów, lista obiektów albo obiekt `{"targets": [...]}`.
 
+Radar zakresów (BGP) sprawdza, czy cele obejmują wszystkie prefiksy ogłaszane przez ASN
+organizacji (dane RIPEstat), i dodaje brakujące jednym poleceniem. Opis: dokumentacja §18.
+
+```bash
+docker compose exec aegis aegis scope bgp --asn 8501
+docker compose exec aegis aegis scope import --asn 8501
+```
+
 ## Skan: limit szybkości, podgrupy, czas
 
 - nmap działa z `--max-rate` (domyślnie 300 pakietów/s), tylko na dozwolonych portach
