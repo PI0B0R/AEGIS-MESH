@@ -20,3 +20,5 @@ android-app/local.properties
 *.sqlite3-*
 .pytest_cache/
 *.egg-info/
+# Local passwords for docker compose (DOJO_ADMIN_PASSWORD, AEGIS_ADMIN_PASSWORD, ...)
+.env
