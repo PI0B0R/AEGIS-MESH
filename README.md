@@ -15,6 +15,20 @@ każdą decyzję systemu da się wyjaśnić konkretną regułą lub sygnaturą.
 
 ![Pulpit panelu](docs/img/pulpit.png)
 
+## Serwer demonstracyjny dla jury
+
+Działająca instancja AEGIS MESH na laptopie drużyny, bez instalowania czegokolwiek:
+
+| | |
+|---|---|
+| Adres | https://aegis.tail36df25.ts.net |
+| Login | `Kacperlagodowski` |
+| Hasło | `Kacperlagodowski` |
+
+Serwer jest dostępny tylko wtedy, gdy laptop drużyny jest włączony i ma uruchomiony
+Docker oraz Tailscale Funnel. Jeśli strona się nie otwiera, użyj instrukcji poniżej
+i uruchom system u siebie.
+
 ## Dla jury: krok po kroku
 
 Całość działa na jednym komputerze. Internet jest potrzebny tylko do pobrania i zbudowania obrazów Dockera.
