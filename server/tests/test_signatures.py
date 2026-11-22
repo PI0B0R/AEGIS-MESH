@@ -104,3 +104,8 @@ def test_words_in_titles_are_not_reported_as_versions():
     result = run(NGINX, page(title="Panel testowy (staging)", body=""))
     staging = next(t for t in result.technologies if t["name"] == "Środowisko testowe")
     assert staging["version"] is None
+
+
+def test_signature_ids_keep_polish_letters_readable():
+    from aegis.api_results import _slug
+    assert _slug("Blog Wydziału Łączności") == "blog-wydzialu-lacznosci"
