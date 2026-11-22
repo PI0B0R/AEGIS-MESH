@@ -22,6 +22,7 @@ class Service:
     product: str | None = None
     version: str | None = None
     extrainfo: str | None = None
+    tunnel: str | None = None       # "ssl" when nmap saw TLS in front of the service
 
 
 @dataclass
@@ -69,7 +70,8 @@ def parse_xml(text: str) -> list[HostResult]:
             svc = port.find("service")
             get = (lambda key: svc.get(key) if svc is not None else None)
             result.services.append(Service(int(port.get("portid")), port.get("protocol"), state.get("state"),
-                                           get("name"), get("product"), get("version"), get("extrainfo")))
+                                           get("name"), get("product"), get("version"), get("extrainfo"),
+                                           get("tunnel")))
         hosts.append(result)
     return hosts
 

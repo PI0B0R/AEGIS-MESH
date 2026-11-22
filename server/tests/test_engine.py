@@ -42,7 +42,8 @@ def test_calibration_then_right_sized_subgroups(tmp_path, fake_nmap):
     run = conn.execute("SELECT * FROM scan_runs WHERE id=?", (run_id,)).fetchone()
     assert run["status"] == "done" and run["calibrated"] == 1
     assert len(fake_nmap.calls[0]) == 16                        # calibration subgroup
-    assert {len(c) for c in fake_nmap.calls[1:-1]} == {run["chunk_size"]} and run["chunk_size"] != 16
+    sizes = sorted(len(c) for c in fake_nmap.calls[1:])                # parallel: any order
+    assert set(sizes[1:]) == {run["chunk_size"]} and sizes[0] <= run["chunk_size"] and run["chunk_size"] != 16
     assert sorted(a for c in fake_nmap.calls for a in c) == sorted(f"10.0.0.{i}" for i in range(1, 255))
     assert run["hosts_up"] == 5 and run["active_seconds"] > 0 and run["estimate_seconds"] > 0
     chunks = conn.execute("SELECT duration_seconds, started_at, finished_at FROM scan_chunks WHERE run_id=?", (run_id,)).fetchall()

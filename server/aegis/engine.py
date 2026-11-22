@@ -9,19 +9,30 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+from datetime import datetime
+
 from . import db as store
+from . import diff
+from . import findings
 from . import scanner as nmap
+from . import signatures as sigs
+from . import web as webprobe
 from .crypto import FieldCipher
+from .scheduler import zone
 from .targets import chunks, expand_all
 
 ACTIVE = ("queued", "running")
 
 
 class Engine:
-    def __init__(self, db_path: str, cipher: FieldCipher, run_chunk=nmap.run_chunk):
+    def __init__(self, db_path: str, cipher: FieldCipher, run_chunk=nmap.run_chunk, probe=None,
+                 after_run=None, clock=None):
         self.db_path = db_path
         self.cipher = cipher
         self.run_chunk = run_chunk
+        self.probe = probe or webprobe.probe   # HTTP fingerprinting; tests pass a fake
+        self.after_run = after_run         # called with (run_id, changes) when a run is done, e.g. DefectDojo export
+        self.clock = clock or (lambda: datetime.now(zone()))   # local time, for "time of day" differences
         self._lock = threading.Lock()
         self._stops: dict[int, threading.Event] = {}
         self._threads: dict[int, threading.Thread] = {}
@@ -130,6 +141,8 @@ class Engine:
                        (store.now(), run_id))
             run = db.execute("SELECT * FROM scan_runs WHERE id=?", (run_id,)).fetchone()
             s = store.settings(db)
+            s["_signatures"] = sigs.load_all(db)
+            s["_limiter"] = webprobe.RateLimiter(float(s["http_rate"]))
             if not run["calibrated"]:
                 first = db.execute("SELECT * FROM scan_chunks WHERE run_id=? AND status='pending' ORDER BY idx LIMIT 1",
                                    (run_id,)).fetchone()
@@ -141,12 +154,33 @@ class Engine:
             if pending and not stop.is_set():
                 with ThreadPoolExecutor(max_workers=max(1, int(s["threads"])), thread_name_prefix=f"scan-{run_id}") as pool:
                     list(pool.map(lambda chunk_id: self._run_one(chunk_id, s, stop), pending))
+            self._recheck(db, run_id, s, stop)
             self._finish(db, run_id, stop.is_set(), time.monotonic() - session)
         except Exception as error:  # noqa: BLE001 - the run must end in a visible state
             db.execute("UPDATE scan_runs SET status='failed', error=?, finished_at=?, active_seconds=active_seconds+? "
                        "WHERE id=?", (str(error)[:500], store.now(), time.monotonic() - session, run_id))
         finally:
             db.close()
+
+    def _recheck(self, db, run_id: int, s: dict, stop: threading.Event) -> None:
+        """Hosts that answered before but not now get one more, separate try before they count as missed."""
+        if stop.is_set() or db.execute("SELECT COUNT(*) FROM scan_chunks WHERE run_id=? AND status='pending'",
+                                       (run_id,)).fetchone()[0]:
+            return
+        row = db.execute("SELECT id, status FROM scan_chunks WHERE run_id=? AND kind='recheck'", (run_id,)).fetchone()
+        if row is None:
+            missing = diff.missing_known(db, run_id)
+            if not missing:
+                return
+            idx = db.execute("SELECT COALESCE(MAX(idx), -1) + 1 FROM scan_chunks WHERE run_id=?", (run_id,)).fetchone()[0]
+            chunk_id = db.execute("INSERT INTO scan_chunks (run_id, idx, targets, size, status, kind) "
+                                  "VALUES (?, ?, ?, ?, 'pending', 'recheck')",
+                                  (run_id, idx, json.dumps(missing), len(missing))).lastrowid
+        elif row["status"] == "pending":
+            chunk_id = row["id"]
+        else:
+            return
+        self._run_one(chunk_id, s, stop, learn=False)
 
     def _recalibrate(self, db, run_id: int) -> None:
         """After the first subgroup: learn the speed and re-split the rest into right-sized subgroups."""
@@ -167,7 +201,7 @@ class Engine:
                    (size, self.estimate(total, s, measured), run_id))
         db.execute("COMMIT")
 
-    def _run_one(self, chunk_id: int, s: dict, stop: threading.Event) -> None:
+    def _run_one(self, chunk_id: int, s: dict, stop: threading.Event, learn: bool = True) -> None:
         if stop.is_set():
             return
         db = store.connect(self.db_path)
@@ -185,26 +219,61 @@ class Engine:
                 db.execute("UPDATE scan_chunks SET status='failed', finished_at=?, error=? WHERE id=?",
                            (store.now(), str(error)[:500], chunk_id))
                 return
-            self._store(db, chunk["run_id"], chunk_id, hosts, duration)
-            self._learn_speed(db, len(addresses), duration)
+            web = self._fingerprint(hosts, s, stop)
+            if stop.is_set():
+                db.execute("UPDATE scan_chunks SET status='pending', started_at=NULL WHERE id=?", (chunk_id,))
+                return
+            self._store(db, chunk["run_id"], chunk_id, hosts, duration, web, s.get("_signatures") or sigs.builtin())
+            if learn:
+                self._learn_speed(db, len(addresses), duration)
         finally:
             db.close()
 
-    def _store(self, db, run_id: int, chunk_id: int, hosts: list, duration: float) -> None:
+    def _fingerprint(self, hosts: list, s: dict, stop: threading.Event) -> dict:
+        """HTTP/HTTPS details of every web service in the subgroup: {(ip, port, proto): WebInfo dict}."""
+        out = {}
+        paths = sigs.paths_to_probe(s.get("_signatures") or sigs.builtin())
+        limiter = s.get("_limiter") or webprobe.RateLimiter(float(s["http_rate"]))
+        for host in hosts:
+            for svc in host.services:
+                if stop.is_set():
+                    return out
+                if svc.proto != "tcp" or not webprobe.is_web(svc.name, svc.port, svc.tunnel):
+                    continue
+                info = self.probe(host.ip, svc.port, webprobe.wants_tls(svc.name, svc.port, svc.tunnel),
+                                  hostname=host.hostname, paths=paths, timeout=float(s["http_timeout"]),
+                                  limiter=limiter, stop=stop)
+                out[(host.ip, svc.port, svc.proto)] = info.to_dict()
+        return out
+
+    def _store(self, db, run_id: int, chunk_id: int, hosts: list, duration: float, web: dict | None = None,
+               signatures: list | None = None) -> None:
         seen = store.now()
         seal = self.cipher.seal
+        web, signatures = web or {}, signatures if signatures is not None else sigs.builtin()
         db.execute("BEGIN IMMEDIATE")
         for host in hosts:
             db.execute("INSERT OR REPLACE INTO host_results VALUES (?, ?, ?, ?)", (run_id, host.ip, host.hostname, seen))
-            db.execute("INSERT INTO hosts (ip, hostname, first_seen, last_seen, last_run_id) VALUES (?, ?, ?, ?, ?) "
+            db.execute("INSERT INTO hosts (ip, hostname, first_seen, last_seen, last_run_id, first_run_id) "
+                       "VALUES (?, ?, ?, ?, ?, ?) "
                        "ON CONFLICT(ip) DO UPDATE SET hostname=COALESCE(excluded.hostname, hostname), "
                        "last_seen=excluded.last_seen, last_run_id=excluded.last_run_id",
-                       (host.ip, host.hostname, seen, seen, run_id))
+                       (host.ip, host.hostname, seen, seen, run_id, run_id))
             for svc in host.services:
-                db.execute("INSERT OR REPLACE INTO services VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                db.execute("INSERT OR REPLACE INTO services (run_id, ip, port, proto, state, name, product, version, "
+                           "extrainfo, tunnel) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                            (run_id, host.ip, svc.port, svc.proto, svc.state, svc.name,
                             seal(svc.product, "services.product"), seal(svc.version, "services.version"),
-                            seal(svc.extrainfo, "services.extrainfo")))
+                            seal(svc.extrainfo, "services.extrainfo"), svc.tunnel))
+                info = web.get((host.ip, svc.port, svc.proto))
+                if info is not None:
+                    db.execute("INSERT OR REPLACE INTO web (run_id, ip, port, proto, url, status, title, server, error, "
+                               "data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                               (run_id, host.ip, svc.port, svc.proto, info["url"], info["status"],
+                                seal(info["title"], "web.title"), seal(info["server"], "web.server"), info["error"],
+                                seal(json.dumps(info), "web.data")))
+                service = {"name": svc.name, "product": svc.product, "version": svc.version, "extrainfo": svc.extrainfo}
+                findings.upsert(db, self.cipher, run_id, host.ip, svc.port, svc.proto, sigs.analyse(service, info, signatures), seen)
         db.execute("UPDATE scan_chunks SET status='done', finished_at=?, duration_seconds=?, hosts_up=? WHERE id=?",
                    (store.now(), round(duration, 3), len(hosts), chunk_id))
         db.execute("COMMIT")
@@ -229,6 +298,16 @@ class Engine:
                        "active_seconds=active_seconds+? WHERE id=?", (up, session_seconds, run_id))
             return
         failed = counts.get("failed", 0)
+        s = store.settings(db)
+        db.execute("BEGIN IMMEDIATE")
+        changes = diff.compute(db, self.cipher, run_id, self.clock().hour, int(s["unstable_after"]))
         db.execute("UPDATE scan_runs SET status='done', finished_at=?, hosts_up=?, active_seconds=active_seconds+?, "
                    "error=? WHERE id=?", (store.now(), up, session_seconds,
                                           f"Nie udało się zeskanować {failed} podgrup." if failed else None, run_id))
+        db.execute("COMMIT")
+        if self.after_run:
+            try:
+                self.after_run(run_id, changes)
+            except Exception as error:  # noqa: BLE001 - an export problem must not undo the scan
+                db.execute("UPDATE scan_runs SET error=COALESCE(error || ' ', '') || ? WHERE id=?",
+                           (f"Eksport po skanie nie powiódł się: {str(error)[:300]}", run_id))

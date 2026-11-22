@@ -33,18 +33,34 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r server/requirements-dev.txt -e server
-      - name: Start server and test network
-        run: docker compose up -d --build --wait
-      - name: Two scans of the test network
+      - name: Start server, test network and DefectDojo
+        run: |
+          docker compose --profile dojo up -d --build
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8000/api/health && break
+            sleep 5
+          done
+      - name: Wait for DefectDojo (first start runs its migrations)
+        run: |
+          for i in $(seq 1 90); do
+            docker compose exec -T aegis aegis dojo check && exit 0
+            sleep 10
+          done
+          docker compose logs dojo-initializer | tail -50
+          exit 1
+      - name: Five scans of the test network, with changes between them
         working-directory: server
         env:
           AEGIS_URL: http://127.0.0.1:8000
+          AEGIS_LAB_DOJO: "1"
         run: pytest -q -m lab
       - name: Commands for the jury
         if: always()
         run: |
           docker compose exec -T aegis aegis scan list || true
-          docker compose exec -T aegis aegis hosts || true
+          docker compose exec -T aegis aegis changes || true
+          docker compose exec -T aegis aegis findings list --min-priority 3 || true
+          docker compose exec -T aegis aegis unstable || true
           docker compose logs aegis | tail -50
       - if: always()
-        run: docker compose down -v
+        run: docker compose --profile dojo --profile zmiana down -v

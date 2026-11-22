@@ -10,6 +10,16 @@ so the terminal, the panel and the jury's scripts all go through the same code p
     aegis hosts [--run ID]
     aegis schedule templates | add nocny | list | delete ID
     aegis settings [rate=500 threads=8 ports=22,80,443]
+
+    aegis summary                     dashboard tiles
+    aegis changes [--run ID]          what changed after the last scan, most important first
+    aegis findings list [--min-priority 4] [--tag staging] [--search wordpress]
+    aegis findings show ID | edit ID --priority 5 --tags a,b --note "..." | reset ID
+    aegis host IP                     host card: services, headers, cookies, certificate, history
+    aegis unstable                    unstable and inactive hosts
+    aegis signatures list | test ... | add ... | delete ID
+    aegis dojo check | send [--ids 1,2] [--min-priority 4] [--unsent]
+    aegis export [--format csv] [-o plik.csv]
 """
 import argparse
 import json
@@ -17,6 +27,7 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -44,6 +55,38 @@ def scan_line(run: dict) -> str:
     est = f"{run['estimate_seconds']:.0f} s" if run.get("estimate_seconds") else "?"
     return (f"#{run['id']:<4} {run['status']:<8} adresy {run['total_hosts']:<6} aktywne {run['hosts_up']:<5} "
             f"czas {took:<9} szacunek {est:<7} {run.get('progress', '')}{'%' if 'progress' in run else ''}")
+
+
+def setting_value(text: str):
+    try:
+        return json.loads(text)          # numbers, true/false, null
+    except ValueError:
+        return text
+
+
+def finding_line(f: dict) -> str:
+    tech = ", ".join(f"{t['name']} {t['version'] or ''}".strip() for t in f["technologies"][:3])
+    mark = " [edytowane]" if f.get("is_edited") else ""
+    state = "" if f["state"] == "active" else f" ({f['state']})"
+    return (f"{f['id']:>4}  P{f['priority']}  {f['ip'] + ':' + str(f['port']):<22} {f['title']}{mark}{state}\n"
+            f"{'':>10}{tech}{'  #' + ' #'.join(f['tags']) if f['tags'] else ''}")
+
+
+def signature_args(p) -> None:
+    p.add_argument("--name", required=True)
+    p.add_argument("--kind", required=True, help="header, cookie, html, title, favicon, path, service, tls")
+    p.add_argument("--pattern", default="", help="wyrażenie regularne; grupa w nawiasach = wersja")
+    p.add_argument("--field", help="nazwa nagłówka albo ścieżka, np. /admin")
+    p.add_argument("--category", default="inne")
+    p.add_argument("--priority", type=int, default=2)
+    p.add_argument("--tags", default="", help="po przecinku")
+    p.add_argument("--message", default="")
+
+
+def signature_body(args) -> dict:
+    return {"name": args.name, "kind": args.kind, "pattern": args.pattern, "field": args.field,
+            "category": args.category, "priority": args.priority, "message": args.message,
+            "tags": [t for t in args.tags.split(",") if t.strip()]}
 
 
 def main(argv=None) -> None:
@@ -88,6 +131,50 @@ def main(argv=None) -> None:
 
     sett = sub.add_parser("settings", help="pokaż lub zmień ustawienia skanu")
     sett.add_argument("pairs", nargs="*", help="klucz=wartość")
+
+    sub.add_parser("summary", help="kafelki pulpitu")
+    ch = sub.add_parser("changes", help="co się zmieniło po skanie")
+    ch.add_argument("--run", type=int)
+    ch.add_argument("--min-priority", type=int, default=1)
+
+    fnd = sub.add_parser("findings", help="znaleziska").add_subparsers(dest="action", required=True)
+    fl = fnd.add_parser("list")
+    fl.add_argument("--min-priority", type=int, default=1)
+    fl.add_argument("--tag")
+    fl.add_argument("--search")
+    fl.add_argument("--ip")
+    fl.add_argument("--all", action="store_true", help="także usługi, które zniknęły")
+    fnd.add_parser("show").add_argument("id", type=int)
+    fe = fnd.add_parser("edit", help="ręczna edycja (skan jej nie nadpisze)")
+    fe.add_argument("id", type=int)
+    fe.add_argument("--priority", type=int)
+    fe.add_argument("--tags", help="po przecinku")
+    fe.add_argument("--title")
+    fe.add_argument("--note")
+    fe.add_argument("--status")
+    fr = fnd.add_parser("reset", help="oddaj pola skanom")
+    fr.add_argument("id", type=int)
+    fr.add_argument("--fields", help="tags,priority,title")
+
+    sub.add_parser("host", help="karta hosta").add_argument("ip")
+    sub.add_parser("unstable", help="hosty niestabilne i nieaktywne")
+
+    sg = sub.add_parser("signatures", help="sygnatury").add_subparsers(dest="action", required=True)
+    sg.add_parser("list")
+    signature_args(sg.add_parser("test", help="sprawdź na istniejących hostach"))
+    signature_args(sg.add_parser("add", help="dodaj i zastosuj"))
+    sg.add_parser("delete").add_argument("id")
+
+    dj = sub.add_parser("dojo", help="DefectDojo").add_subparsers(dest="action", required=True)
+    dj.add_parser("check")
+    ds = dj.add_parser("send")
+    ds.add_argument("--ids", help="np. 3,7,12")
+    ds.add_argument("--min-priority", type=int)
+    ds.add_argument("--unsent", action="store_true")
+
+    ex = sub.add_parser("export", help="eksport znalezisk")
+    ex.add_argument("--format", choices=("json", "csv"), default="json")
+    ex.add_argument("-o", "--output")
 
     args = parser.parse_args(argv)
 
@@ -157,10 +244,85 @@ def main(argv=None) -> None:
             body = {}
             for pair in args.pairs:
                 key, _, value = pair.partition("=")
-                body[key] = int(value) if value.isdigit() else value
+                body[key] = setting_value(value)
             show(call("PATCH", "/api/settings", body))
         else:
             show(call("GET", "/api/settings"))
+    elif args.command == "summary":
+        show(call("GET", "/api/summary"))
+    elif args.command == "changes":
+        query = f"?min_priority={args.min_priority}" + (f"&run_id={args.run}" if args.run else "")
+        data = call("GET", "/api/changes" + query)
+        print(f"Skan #{data['run_id']}: {data['total']} zmian")
+        for c in data["changes"]:
+            print(f"  P{c['priority']}  {c['message']}")
+    elif args.command == "findings":
+        if args.action == "list":
+            params = {"min_priority": args.min_priority, "tag": args.tag, "q": args.search, "ip": args.ip,
+                      "state": "all" if args.all else "active"}
+            query = "&".join(f"{k}={urllib.parse.quote(str(v))}" for k, v in params.items() if v is not None)
+            data = call("GET", f"/api/findings?{query}")
+            for f in data["findings"]:
+                print(finding_line(f))
+            print(f"Razem: {data['total']}")
+        elif args.action == "show":
+            show(call("GET", f"/api/findings/{args.id}"))
+        elif args.action == "edit":
+            body = {"priority": args.priority, "title": args.title, "note": args.note, "status": args.status}
+            if args.tags is not None:
+                body["tags"] = [t for t in args.tags.split(",") if t.strip()]
+            print(finding_line(call("PATCH", f"/api/findings/{args.id}", {k: v for k, v in body.items() if v is not None})))
+        else:
+            fields = args.fields.split(",") if args.fields else None
+            print(finding_line(call("POST", f"/api/findings/{args.id}/reset", {"fields": fields})))
+    elif args.command == "host":
+        show(call("GET", f"/api/hosts/{args.ip}"))
+    elif args.command == "unstable":
+        for h in call("GET", "/api/hosts/unstable")["hosts"]:
+            pattern = (h.get("daypart") or {}).get("pattern") or ""
+            print(f"{h['ip']:<16} {h['state']:<10} bez odpowiedzi: {h['missed']}  {pattern}")
+    elif args.command == "signatures":
+        if args.action == "list":
+            data = call("GET", "/api/signatures")
+            for title, items in (("Wbudowane", data["builtin"]), ("Własne", data["custom"])):
+                print(f"{title} ({len(items)}):")
+                for sig in items:
+                    print(f"  P{sig['priority']} {sig['id']:<20} {sig['kind']:<8} {sig['name']}")
+        elif args.action == "test":
+            data = call("POST", "/api/signatures/test", signature_body(args))
+            for m in data["matches"]:
+                print(f"  {m['ip']}:{m['port']}  {m['version'] or ''}  {m['evidence']}")
+            print(f"Pasuje do {data['count']} usług.")
+        elif args.action == "add":
+            data = call("POST", "/api/signatures", signature_body(args))
+            print(f"Dodano sygnaturę {data['signature']['id']}, przeliczono {data['reanalysed_findings']} znalezisk.")
+        else:
+            show(call("DELETE", f"/api/signatures/{args.id}"))
+    elif args.command == "dojo":
+        if args.action == "check":
+            show(call("POST", "/api/dojo/check"))
+        else:
+            ids = [int(i) for i in args.ids.split(",")] if args.ids else None
+            result = call("POST", "/api/dojo/send", {"finding_ids": ids, "min_priority": args.min_priority,
+                                                     "only_unsent": args.unsent})
+            if not result["sent"]:
+                print(result.get("message"))
+            else:
+                total = ((result.get("statistics") or {}).get("after") or {}).get("total", {})
+                print(f"Wysłano {result['sent']} znalezisk do DefectDojo (test #{result['test_id']}, "
+                      f"produkt #{result['product_id']}). Aktywnych w teście: {total.get('active', '?')}.")
+    elif args.command == "export":
+        base = os.environ.get("AEGIS_URL", "http://127.0.0.1:8000").rstrip("/")
+        if args.format == "json":
+            text = json.dumps(call("GET", "/api/export/findings?format=json"), ensure_ascii=False, indent=2)
+        else:
+            with urllib.request.urlopen(f"{base}/api/export/findings?format=csv", timeout=60) as response:
+                text = response.read().decode("utf-8")
+        if args.output:
+            Path(args.output).write_text(text, encoding="utf-8")
+            print(f"Zapisano {args.output}")
+        else:
+            print(text)
 
 
 if __name__ == "__main__":

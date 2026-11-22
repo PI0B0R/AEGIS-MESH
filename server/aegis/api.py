@@ -14,9 +14,11 @@ from pydantic import BaseModel, Field
 
 from . import __version__
 from . import db as store
+from . import dojo
 from .crypto import FieldCipher
 from .engine import Engine
 from .scheduler import TEMPLATES, Scheduler, validate
+from .api_results import register as register_results
 from .targets import parse_any, parse_text
 
 
@@ -45,6 +47,25 @@ class SettingsPatch(BaseModel):
     chunk_seconds: int | None = Field(None, ge=5, le=3600, description="Docelowy czas jednej podgrupy.")
     min_chunk: int | None = Field(None, ge=1, le=4096)
     max_chunk: int | None = Field(None, ge=1, le=65536)
+    http_rate: float | None = Field(None, gt=0, le=1000, description="Zapytania HTTP na sekundę przy rozpoznawaniu.")
+    http_timeout: float | None = Field(None, gt=0, le=60)
+    unstable_after: int | None = Field(None, ge=1, le=20, description="Po ilu skanach bez odpowiedzi host jest nieaktywny.")
+    dojo_url: str | None = Field(None, pattern=r"^https?://", description="Adres DefectDojo, np. http://dojo-nginx:8080")
+    dojo_user: str | None = None
+    dojo_password: str | None = Field(None, description="Przechowywane zaszyfrowane.")
+    dojo_token: str | None = Field(None, description="Token API DefectDojo (przechowywany zaszyfrowany).")
+    dojo_product: str | None = None
+    dojo_auto: bool | None = Field(None, description="Po każdym skanie wysyłaj nowe ważne znaleziska.")
+    dojo_min_priority: int | None = Field(None, ge=1, le=5)
+
+
+class DojoSendIn(BaseModel):
+    finding_ids: list[int] | None = Field(None, description="Wybrane znaleziska. Puste = według min_priority.")
+    min_priority: int | None = Field(None, ge=1, le=5)
+    only_unsent: bool = Field(False, description="Tylko te, których jeszcze nie wysłano.")
+
+
+SECRET_SETTINGS = ("dojo_password", "dojo_token")
 
 
 class ScheduleIn(BaseModel):
@@ -71,14 +92,16 @@ def _run_row(row) -> dict:
 
 
 def create_app(data_dir: str | os.PathLike | None = None, key_path: str | os.PathLike | None = None,
-               background: bool = True, run_chunk=None) -> FastAPI:
+               background: bool = True, run_chunk=None, probe=None) -> FastAPI:
     data = Path(data_dir or os.environ.get("AEGIS_DATA", "./data"))
     data.mkdir(parents=True, exist_ok=True)
     db_path = str(data / "aegis.sqlite3")
     key = Path(key_path or os.environ.get("AEGIS_KEY_FILE", data.parent / "keys" / "aegis.key"))
     store.initialize(db_path)
     cipher = FieldCipher.load(key)
-    engine = Engine(db_path, cipher, **({"run_chunk": run_chunk} if run_chunk else {}))
+    _dojo_from_env(db_path, cipher)
+    engine = Engine(db_path, cipher, probe=probe, after_run=dojo.after_run(db_path, cipher),
+                    **({"run_chunk": run_chunk} if run_chunk else {}))
     scheduler = Scheduler(db_path, engine)
 
     @asynccontextmanager
@@ -89,7 +112,9 @@ def create_app(data_dir: str | os.PathLike | None = None, key_path: str | os.Pat
         scheduler.stop()
 
     app = FastAPI(title="AEGIS MESH API", version=__version__, lifespan=lifespan,
-                  description="Skaner discovery dużej infrastruktury. Etap 1: cele, skany nmap, harmonogram.")
+                  description="Skaner discovery dużej infrastruktury: cele, skany nmap z harmonogramem, "
+                              "rozpoznawanie HTTP/HTTPS i technologii, sygnatury, porównanie skanów, "
+                              "hosty niestabilne, znaleziska z ochroną ręcznych edycji, eksport do DefectDojo.")
     app.state.engine, app.state.scheduler, app.state.cipher, app.state.db_path = engine, scheduler, cipher, db_path
 
     def conn():
@@ -98,6 +123,10 @@ def create_app(data_dir: str | os.PathLike | None = None, key_path: str | os.Pat
     @app.exception_handler(ValueError)
     async def bad_input(_request: Request, error: ValueError):
         return JSONResponse({"detail": str(error)}, status_code=400)
+
+    @app.exception_handler(dojo.DojoError)
+    async def dojo_failed(_request: Request, error: dojo.DojoError):
+        return JSONResponse({"detail": str(error)}, status_code=502)
 
     @app.exception_handler(RuntimeError)
     async def conflict(_request: Request, error: RuntimeError):
@@ -213,9 +242,10 @@ def create_app(data_dir: str | os.PathLike | None = None, key_path: str | os.Pat
             run = db.execute("SELECT * FROM scan_runs WHERE id=?", (run_id,)).fetchone()
             if run is None:
                 raise HTTPException(404, "Nie ma takiego skanu.")
-            chunk_rows = db.execute("SELECT id, idx, size, status, started_at, finished_at, duration_seconds, hosts_up, "
-                                    "attempts, error FROM scan_chunks WHERE run_id=? ORDER BY idx", (run_id,)).fetchall()
-            done = sum(c["size"] for c in chunk_rows if c["status"] == "done")
+            chunk_rows = db.execute("SELECT id, idx, kind, size, status, started_at, finished_at, duration_seconds, "
+                                    "hosts_up, attempts, error FROM scan_chunks WHERE run_id=? ORDER BY idx",
+                                    (run_id,)).fetchall()
+            done = sum(c["size"] for c in chunk_rows if c["status"] == "done" and c["kind"] == "scan")
             out = _run_row(run)
             out["progress"] = round(100 * done / run["total_hosts"], 1) if run["total_hosts"] else 100.0
             out["chunks"] = [dict(c) for c in chunk_rows]
@@ -260,11 +290,17 @@ def create_app(data_dir: str | os.PathLike | None = None, key_path: str | os.Pat
         return out
 
     # ---- settings ----------------------------------------------------------------
+    def _public_settings(db) -> dict:
+        values = store.settings(db)
+        for key in SECRET_SETTINGS:
+            values[key] = "********" if values.get(key) else None      # secrets are never returned
+        return values
+
     @app.get("/api/settings", tags=["ustawienia"])
     def get_settings():
         db = conn()
         try:
-            return store.settings(db)
+            return _public_settings(db)
         finally:
             db.close()
 
@@ -273,8 +309,28 @@ def create_app(data_dir: str | os.PathLike | None = None, key_path: str | os.Pat
         db = conn()
         try:
             for key, value in body.model_dump(exclude_none=True).items():
+                if key in SECRET_SETTINGS:
+                    value = cipher.seal(value, f"settings.{key}") if value else None
                 store.save_setting(db, key, value)
-            return store.settings(db)
+            return _public_settings(db)
+        finally:
+            db.close()
+
+    # ---- DefectDojo ---------------------------------------------------------------
+    @app.post("/api/dojo/check", tags=["defectdojo"], summary="Sprawdź połączenie z DefectDojo")
+    def dojo_check():
+        db = conn()
+        try:
+            return dojo.Dojo(store.settings(db), cipher).check()
+        finally:
+            db.close()
+
+    @app.post("/api/dojo/send", tags=["defectdojo"],
+              summary="Wyślij wybrane znaleziska do DefectDojo (finding informacyjny z dowodami)")
+    def dojo_send(body: DojoSendIn):
+        db = conn()
+        try:
+            return dojo.send(db, cipher, body.finding_ids, body.min_priority, body.only_unsent)
         finally:
             db.close()
 
@@ -318,7 +374,24 @@ def create_app(data_dir: str | os.PathLike | None = None, key_path: str | os.Pat
         finally:
             db.close()
 
+    register_results(app, conn, cipher, engine)
     return app
+
+
+def _dojo_from_env(db_path: str, cipher: FieldCipher) -> None:
+    """AEGIS_DOJO_URL/USER/PASSWORD/TOKEN fill the DefectDojo settings once, if they are still empty."""
+    url = os.environ.get("AEGIS_DOJO_URL")
+    db = store.connect(db_path)
+    try:
+        if not url or store.settings(db).get("dojo_url"):
+            return
+        store.save_setting(db, "dojo_url", url)
+        store.save_setting(db, "dojo_user", os.environ.get("AEGIS_DOJO_USER"))
+        for key, env in (("dojo_password", "AEGIS_DOJO_PASSWORD"), ("dojo_token", "AEGIS_DOJO_TOKEN")):
+            if os.environ.get(env):
+                store.save_setting(db, key, cipher.seal(os.environ[env], f"settings.{key}"))
+    finally:
+        db.close()
 
 
 def app_from_env() -> FastAPI:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aegis-mesh"
-version = "0.1.0"
+version = "0.2.0"
 description = "AEGIS MESH: discovery scanner for large networks"
 requires-python = ">=3.11"
 dependencies = ["fastapi", "uvicorn", "cryptography"]
@@ -14,6 +14,9 @@ aegis = "aegis.cli:main"
 
 [tool.setuptools]
 packages = ["aegis"]
+
+[tool.setuptools.package-data]
+aegis = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
