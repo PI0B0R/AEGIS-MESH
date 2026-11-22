@@ -37,9 +37,10 @@ znaleziska 4–5 o statusie „nowe”, i pokazuje jedno powiadomienie. Dotknię
    tailscale funnel status          # pokazuje adres https://aegis.<twoja-siec>.ts.net
    ```
    Przy pierwszym uruchomieniu Tailscale poda link do zatwierdzenia Funnel.
-4. Wpisz ten adres do APK: w repozytorium na GitHubie **Settings → Secrets and variables →
-   Actions → Variables** dodaj zmienną `AEGIS_FUNNEL_URL`. Kolejna kompilacja w CI wbuduje go w aplikację.
-   Lokalnie: `./gradlew assembleDebug -PaegisUrl=https://aegis.twoja-siec.ts.net`.
+4. Adres naszego laptopa, `https://aegis.tail36df25.ts.net`, jest już wbudowany w aplikację
+   (`app/build.gradle`). Inny adres: zmienna `AEGIS_FUNNEL_URL` w repozytorium na GitHubie
+   (**Settings → Secrets and variables → Actions → Variables**) albo lokalnie
+   `./gradlew assembleDebug -PaegisUrl=https://aegis.twoja-siec.ts.net`.
 5. Wyłączenie: `tailscale funnel --bg 8000 off`. Tunel jest tylko na pokaz; jury go nie potrzebuje.
 
 Przez Funnel z internetu widać tylko ekran logowania panelu, `/api/health` (nazwa i wersja)
