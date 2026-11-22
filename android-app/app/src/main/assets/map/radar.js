@@ -29,15 +29,14 @@
     if (window.AegisApp) window.AegisApp.select(id);
   }
 
-  /** Points and thin outlines only; the selected router is red, bigger and on top. */
+  /** Only dots; the area is drawn just for the selected router, which is red, bigger and on top. */
   function draw() {
     routerLayer.clearLayers();
     deviceLayer.clearLayers();
     var chosen = null;
     (last.routers || []).forEach(function (r) {
       if (r.id === selected) { chosen = r; return; }
-      L.circle([r.lat, r.lon], { radius: r.r, color: r.color, weight: 1, opacity: 0.45, fill: false, interactive: false }).addTo(routerLayer);
-      L.circleMarker([r.lat, r.lon], { radius: 4, color: '#0a0a0a', weight: 1, fillColor: r.color, fillOpacity: 1 })
+      L.circleMarker([r.lat, r.lon], { radius: 5, color: '#0a0a0a', weight: 1, fillColor: r.color, fillOpacity: 1 })
         .bindTooltip(r.label, { className: 'router-label' }).on('click', function () { pick(r.id); }).addTo(routerLayer);
     });
     // devices heard in the latest scan, around the phone at their rough distance

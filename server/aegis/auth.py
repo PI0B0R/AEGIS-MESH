@@ -35,7 +35,7 @@ PERMISSIONS = {
         "/api/auth/me", "/api/targets", "/api/scans", "/api/scans/estimate", "/api/scans/{run_id}", "/api/hosts",
         "/api/hosts/unstable", "/api/hosts/{ip}", "/api/inventory", "/api/summary", "/api/changes",
         "/api/changes/history", "/api/findings", "/api/findings/{finding_id}", "/api/signatures",
-        "/api/schedules", "/api/schedules/templates", "/api/export/findings")},
+        "/api/schedules", "/api/schedules/templates", "/api/export/findings", "/api/wifi/known")},
     ("POST", "/api/auth/logout"): "czytelnik",
     ("POST", "/api/auth/password"): "czytelnik",
     # findings
@@ -44,6 +44,11 @@ PERMISSIONS = {
     ("POST", "/api/import/findings"): "analityk",
     ("POST", "/api/dojo/send"): "analityk",
     ("POST", "/api/dojo/check"): "analityk",
+    # Wi-Fi radar: the known routers (baseline) and the phones' reports that raise red flags
+    ("POST", "/api/wifi/known"): "analityk",
+    ("PATCH", "/api/wifi/known/{mac}"): "analityk",
+    ("DELETE", "/api/wifi/known/{mac}"): "analityk",
+    ("POST", "/api/wifi/report"): "analityk",
     # targets, scans, signatures, schedules, scan settings
     ("GET", "/api/settings"): "edytor",
     ("PATCH", "/api/settings"): "edytor",          # DefectDojo keys inside need admin (checked in the route)

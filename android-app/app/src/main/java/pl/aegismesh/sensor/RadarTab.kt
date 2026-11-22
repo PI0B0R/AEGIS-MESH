@@ -31,7 +31,10 @@ import org.json.JSONObject
  * Tab 3: the Wi-Fi radar on a map. OpenStreetMap (Leaflet, bundled in assets/map) with the phone's GPS
  * position. After every Wi-Fi scan the radar beam turns 1.5 times. With "Zbieraj" on, every router heard
  * is saved as a ping (router + signal + GPS position); from all pings the app estimates where each router
- * is (weighted centre and an uncertainty circle). Everything stays on the phone; "Eksport CSV" saves it.
+ * is (weighted centre and an uncertainty circle). Pings stay on the phone; "Eksport CSV" saves them.
+ *
+ * "Zapamiętaj wszystkie jako znane" saves the routers on the AEGIS server, shared by the whole team. After
+ * that the phone reports what it hears (at most once a minute) and the server raises red flags as alerts.
  */
 internal class RadarTab(private val host: MainActivity) : Tab {
     private val context = host
@@ -49,9 +52,18 @@ internal class RadarTab(private val host: MainActivity) : Tab {
     private var estimates: Map<String, Estimate> = emptyMap()
     /** The router picked in the list or on the map: drawn red and bigger until another one is picked. */
     private var selected: String? = null
+    /** The team's known routers from the server (empty when offline or not logged in). */
+    private var serverKnown: List<ServerRouter> = emptyList()
+    private var lastReport = 0L
+
+    private class ServerRouter(val ap: KnownAp, val lat: Double?, val lon: Double?, val radius: Double?)
 
     private val summary = TextView(context).apply { ink(Palette.MUTED); textSize = 13f; setPadding(8, 4, 8, 4) }
     private val collect = Button(context).apply { setOnClickListener { toggleCollecting() } }
+    private val rememberAll = Button(context).apply {
+        text = "Zapamiętaj wszystkie jako znane"; gold(outline = true)
+        setOnClickListener { confirmRemember() }
+    }
     private val enableGps = Button(context).apply {
         text = "Włącz lokalizację w telefonie"; gold(); visibility = View.GONE
         setOnClickListener { context.startActivity(Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
@@ -113,6 +125,7 @@ internal class RadarTab(private val host: MainActivity) : Tab {
             val b1 = button("Eksport CSV") { exportCsv() }; val b2 = button("Wyczyść") { confirmClear() }
             addView(b1, weighted(b1)); addView(b2, weighted(b2))
         })
+        if (host.session.canEditFindings) addView(rememberAll, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { setMargins(4, 2, 4, 2) })
         addView(enableGps, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { setMargins(4, 2, 4, 2) })
         addView(summary)
         addView(map, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1.7f).apply { setMargins(0, 4, 0, 4) })
@@ -150,6 +163,7 @@ internal class RadarTab(private val host: MainActivity) : Tab {
             return
         }
         startLocation()
+        syncKnown()
         if (!receiving) {
             val filter = IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION)
             if (android.os.Build.VERSION.SDK_INT >= 33) context.registerReceiver(scanDone, filter, Context.RECEIVER_NOT_EXPORTED)
@@ -219,6 +233,7 @@ internal class RadarTab(private val host: MainActivity) : Tab {
             } else host.say("Czekam na świeżą pozycję GPS, ten skan nie został zapisany.")
         } else if (fix == null) host.say("Brak pozycji GPS: włącz lokalizację i podejdź do okna.")
         show()
+        report()
     }
 
     @Suppress("DEPRECATION")
@@ -229,7 +244,7 @@ internal class RadarTab(private val host: MainActivity) : Tab {
     // ---- screen ------------------------------------------------------------------------
 
     private fun show() {
-        val known = loadKnown(context)
+        val known = loadKnown(context) + serverKnown.map { it.ap }
         val seen = visible().associateBy { it.bssid }
         estimates = estimate(pings).associateBy { it.bssid }
         val rows = (seen.keys + estimates.keys).map { bssid ->
@@ -241,7 +256,8 @@ internal class RadarTab(private val host: MainActivity) : Tab {
         val counts = rows.groupingBy { it.verdict.status }.eachCount()
         val fix = location?.let { weakGps(it)?.let { w -> "⚠ $w" } ?: "GPS ±${it.accuracy.toInt()} m (${it.provider}): dobry" } ?: "brak pozycji GPS"
         summary.text = Status.values().joinToString(" · ") { "${it.label}: ${counts[it] ?: 0}" } +
-            "\nWidoczne teraz: ${seen.size} · pingi: ${pings.size} · routery na mapie: ${estimates.size}\n$fix · zapis: ${if (collecting) "włączony" else "wyłączony"}"
+            "\nWidoczne teraz: ${seen.size} · pingi: ${pings.size} · routery na mapie: ${estimates.size} · znane (serwer): ${serverKnown.size}" +
+            "\n$fix · zapis: ${if (collecting) "włączony" else "wyłączony"}"
         pushMap(rows)
     }
 
@@ -261,6 +277,12 @@ internal class RadarTab(private val host: MainActivity) : Tab {
                 .put("color", hex(Palette.status(row.verdict.status)))
                 .put("label", "$name · ±${e.radius.toInt()} m · pewność ${e.confidence}"))
         }
+        // known routers from the team's map that this phone has no pings for
+        serverKnown.filter { it.lat != null && it.lon != null && it.ap.bssid !in estimates }.forEach { k ->
+            routers.put(JSONObject().put("id", k.ap.bssid).put("lat", k.lat).put("lon", k.lon).put("r", k.radius ?: 15.0)
+                .put("color", hex(Palette.status(Status.KNOWN)))
+                .put("label", "${k.ap.ssid.ifEmpty { "(ukryta sieć)" }} · znany (mapa drużyny)"))
+        }
         data.put("routers", routers)
         val devices = JSONArray()
         location?.let { me ->
@@ -279,6 +301,86 @@ internal class RadarTab(private val host: MainActivity) : Tab {
             val dots = JSONArray()
             pings.takeLast(3_000).forEach { dots.put(JSONArray().put(it.lat).put(it.lon).put(it.rssi).put(if (it.accuracy <= MAX_ACCURACY_M) 1 else 0)) }
             js("aegis.pings($dots)")
+        }
+    }
+
+    // ---- the team's known routers on the server, and red flags ------------------------------
+
+    /** Reads the known routers from the server; offline the last list stays. */
+    private fun syncKnown() {
+        if (!host.session.loggedIn) return
+        host.work({ host.session.api().get("/api/wifi/known") }) { result ->
+            result.onSuccess { data ->
+                fun num(o: JSONObject, key: String) = if (o.isNull(key)) null else o.optDouble(key).takeIf { !it.isNaN() }
+                serverKnown = data.optJSONArray("routers").objects().map { o ->
+                    ServerRouter(KnownAp(o.optString("ssid"), o.optString("bssid"), o.text("security").orEmpty()),
+                        num(o, "lat"), num(o, "lon"), num(o, "radius"))
+                }
+                show()
+            }
+        }
+    }
+
+    private fun confirmRemember() {
+        val rows = (0 until adapter.count).map { adapter.getItem(it)!! }
+        if (rows.isEmpty()) { host.say("Nie widzę jeszcze żadnych routerów. Poczekaj na skan."); return }
+        AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Zapamiętać ${rows.size} routerów jako znane?")
+            .setMessage("Zapiszę je na serwerze AEGIS z położeniem, nazwą, kanałem i siłą sygnału. Cała drużyna zobaczy tę samą listę.\n\n" +
+                "Potem każdy nowy router albo hotspot, znana nazwa sieci na obcym urządzeniu (evil twin) oraz znany router, " +
+                "który zniknął albo się przesunął, da czerwoną flagę w zakładce Alerty.")
+            .setPositiveButton("Zapamiętaj") { _, _ -> remember(rows) }
+            .setNegativeButton("Anuluj", null).show()
+    }
+
+    private fun remember(rows: List<Row>) {
+        val fix = location?.takeIf { it.accuracy <= MAX_ACCURACY_M }
+        val routers = JSONArray()
+        rows.forEach { row ->
+            val ap = row.seen ?: row.estimate?.last?.ap ?: return@forEach
+            val o = JSONObject().put("bssid", row.bssid).put("ssid", ap.ssid).put("security", securityMode(ap.flags))
+                .put("frequency", ap.frequency).put("rssi", row.seen?.rssi ?: row.estimate?.bestRssi)
+            val e = row.estimate
+            if (e != null) o.put("lat", e.lat).put("lon", e.lon).put("radius", e.radius)
+            else if (fix != null && row.seen != null)   // no pings yet: the phone's spot, with the distance from the signal
+                o.put("lat", fix.latitude).put("lon", fix.longitude).put("radius", rssiDistance(row.seen.rssi) + fix.accuracy)
+            routers.put(o)
+        }
+        rememberAll.isEnabled = false
+        host.work({ host.session.api().post("/api/wifi/known", JSONObject().put("routers", routers)) }) { result ->
+            rememberAll.isEnabled = true
+            result.onSuccess {
+                host.say("Zapamiętano ${it.optInt("saved")} routerów na serwerze (nowych: ${it.optInt("added")}). Od teraz obce sieci dadzą czerwoną flagę.")
+                syncKnown()
+            }.onFailure(host::fail)
+        }
+    }
+
+    /** After a scan: tells the server what the phone hears, at most once a minute. New red flags are announced. */
+    private fun report() {
+        if (!host.session.loggedIn || !host.session.canEditFindings || serverKnown.isEmpty()) return
+        if (SystemClock.elapsedRealtime() - lastReport < 60_000) return
+        val heard = visible()
+        if (heard.isEmpty()) return
+        lastReport = SystemClock.elapsedRealtime()
+        val known = loadKnown(context) + serverKnown.map { it.ap }
+        val aps = JSONArray()
+        heard.forEach { ap ->
+            val o = JSONObject().put("bssid", ap.bssid).put("ssid", ap.ssid).put("security", securityMode(ap.flags))
+                .put("frequency", ap.frequency).put("rssi", ap.rssi).put("hotspot", classify(ap, known).status == Status.HOTSPOT)
+            estimates[ap.bssid]?.let { e -> o.put("lat", e.lat).put("lon", e.lon).put("radius", e.radius) }
+            aps.put(o)
+        }
+        val body = JSONObject().put("aps", aps)
+        location?.takeIf { SystemClock.elapsedRealtimeNanos() - it.elapsedRealtimeNanos < 120_000_000_000L }?.let {
+            body.put("position", JSONObject().put("lat", it.latitude).put("lon", it.longitude).put("acc", it.accuracy.toDouble()))
+        }
+        host.work({ host.session.api().post("/api/wifi/report", body) }) { result ->
+            result.onSuccess { data ->
+                val flags = data.optJSONArray("flags").objects()
+                if (flags.isNotEmpty()) host.say(if (flags.size == 1) "⚑ Czerwona flaga: ${flags[0].optString("title")}. Zobacz Alerty."
+                                                 else "⚑ ${flags.size} nowe czerwone flagi Wi-Fi. Zobacz Alerty.")
+            }
         }
     }
 

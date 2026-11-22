@@ -45,9 +45,9 @@ def open_panel(browser, username, password):
     return page, errors
 
 
-def test_admin_sees_five_screens_and_can_edit_a_finding(browser):
+def test_admin_sees_six_screens_and_can_edit_a_finding(browser):
     page, errors = open_panel(browser, "admin", ADMIN)
-    assert page.locator("#nav a").all_inner_texts() == ["Pulpit", "Cele", "Hosty", "Sygnatury", "Ustawienia"]
+    assert page.locator("#nav a").all_inner_texts() == ["Pulpit", "Cele", "Hosty", "Sygnatury", "Wi-Fi", "Ustawienia"]
     page.wait_for_selector(".tile")
     assert page.locator(".tile .n").count() == 3 and page.get_by_role("button", name="Skanuj teraz").is_visible()
     assert page.locator(".news li").count() >= 1
@@ -65,7 +65,8 @@ def test_admin_sees_five_screens_and_can_edit_a_finding(browser):
     page.wait_for_selector(".badge:text('edytowane')")
     assert page.locator("text=Notatka: sprawdzone w przeglądarce").is_visible()
 
-    for screen, text in (("cele", "Wklej adresy"), ("sygnatury", "Nowa sygnatura"), ("ustawienia", "Użytkownicy i role")):
+    for screen, text in (("cele", "Wklej adresy"), ("sygnatury", "Nowa sygnatura"), ("wifi", "Znane routery"),
+                         ("ustawienia", "Użytkownicy i role")):
         page.goto(f"{URL}/#{screen}")
         page.wait_for_selector(f"text={text}")
     assert not errors, errors

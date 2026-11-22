@@ -65,6 +65,10 @@ CREATE TABLE IF NOT EXISTS audit (
 CREATE TABLE IF NOT EXISTS schedules (
     id INTEGER PRIMARY KEY, name TEXT NOT NULL, frequency TEXT NOT NULL, window_start TEXT NOT NULL,
     window_end TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, last_started_at TEXT, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS wifi_known (
+    bssid TEXT PRIMARY KEY, ssid TEXT NOT NULL DEFAULT '', security TEXT, frequency INTEGER, rssi INTEGER,
+    lat REAL, lon REAL, radius REAL, note TEXT, added_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    last_seen TEXT, missed INTEGER NOT NULL DEFAULT 0);
 """
 
 # Columns sealed by FieldCipher. Banners reveal exact software versions, notes are free text.
@@ -74,7 +78,7 @@ CREATE TABLE IF NOT EXISTS schedules (
 SENSITIVE = {"targets.note", "services.product", "services.version", "services.extrainfo",
              "web.title", "web.server", "web.data",
              "findings.auto", "findings.technologies", "findings.title", "findings.reasons", "findings.note",
-             "changes.message", "changes.detail", "settings.dojo_token", "settings.dojo_password"}
+             "changes.message", "changes.detail", "wifi_known.note", "settings.dojo_token", "settings.dojo_password"}
 
 # Columns added after stage 1: (table, column, definition). Applied to older databases on start.
 MIGRATIONS = [

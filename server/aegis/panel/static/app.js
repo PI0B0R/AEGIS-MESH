@@ -1,4 +1,4 @@
-/* AEGIS MESH panel: 5 screens, each with one purpose.
+/* AEGIS MESH panel: 6 screens, each with one purpose.
  * Data from scanned hosts (titles, headers, banners) is untrusted, so the DOM is always built
  * with textContent (helper h), never innerHTML. Buttons the user has no right to are not rendered. */
 "use strict";
@@ -6,7 +6,7 @@
 const ROLES = ["czytelnik", "analityk", "edytor", "admin"];
 const SCREENS = [
   ["pulpit", "Pulpit", "czytelnik"], ["cele", "Cele", "czytelnik"], ["hosty", "Hosty", "czytelnik"],
-  ["sygnatury", "Sygnatury", "czytelnik"], ["ustawienia", "Ustawienia", "admin"],
+  ["sygnatury", "Sygnatury", "czytelnik"], ["wifi", "Wi-Fi", "czytelnik"], ["ustawienia", "Ustawienia", "admin"],
 ];
 const STATUS = ["nowe", "potwierdzone", "w-trakcie", "rozwiązane", "fałszywy-alarm", "zaakceptowane-ryzyko"];
 const KIND_HELP = {
@@ -187,7 +187,7 @@ function route() {
   if (document.querySelector('#nav a[aria-current]')) document.querySelector('#nav a[aria-current]').setAttribute("aria-current", "page");
   const view = $("#view");
   const screens = { pulpit: dashboard, cele: targets, hosty: param ? hostCard : hosts, sygnatury: signatures,
-    ustawienia: settings, konto: account };
+    wifi: wifiScreen, ustawienia: settings, konto: account };
   const allowed = SCREENS.find(([id]) => id === screen);
   if (!screens[screen] || (allowed && !can(allowed[2]))) return (location.hash = "#pulpit");
   view.replaceChildren(h("p", { class: "muted" }, "Ładowanie…"));
@@ -628,6 +628,76 @@ async function signatures(view) {
     data.custom.length ? table(data.custom, true) : h("p", { class: "empty" }, "Brak własnych sygnatur.")));
   parts.push(h("details", { class: "card" }, h("summary", {}, `Wbudowane (${data.builtin.length})`), table(data.builtin, false)));
   view.replaceChildren(...parts);
+}
+
+// ---- Wi-Fi: known routers (the team's baseline from the phones) and red flags ------------------
+const WIFI_KIND = { "wifi-nowy": "nowy router / hotspot", "wifi-evil-twin": "możliwy evil twin",
+  "wifi-zabezpieczenie": "słabsze zabezpieczenie", "wifi-przesuniety": "router przesunięty", "wifi-zniknal": "router zniknął" };
+
+/** 2.4 GHz channels 1-13 (14 at 2484), 5 and 6 GHz from the frequency in MHz. */
+function channel(mhz) {
+  if (!mhz) return "–";
+  if (mhz === 2484) return "14";
+  if (mhz >= 2412 && mhz <= 2472) return String((mhz - 2407) / 5);
+  if (mhz >= 5000 && mhz < 5925) return String((mhz - 5000) / 5);
+  if (mhz >= 5925) return `${(mhz - 5950) / 5} (6 GHz)`;
+  return `${mhz} MHz`;
+}
+
+async function wifiScreen(view) {
+  const [data, flags] = await Promise.all([api("GET", "/api/wifi/known"), api("GET", "/api/findings?state=active")]);
+  const alerts = flags.findings.filter((f) => String(f.proto).startsWith("wifi"));
+  const search = h("input", { type: "search", id: "wifi-szukaj", placeholder: "Szukaj: nazwa, BSSID, notatka…", "aria-label": "Szukaj routerów" });
+  const body = h("tbody", {});
+  const count = h("span", { class: "muted" });
+  const row = (r) => {
+    const note = h("td", { class: "small" }, r.note || h("span", { class: "muted" }, "–"));
+    const editNote = () => {
+      const input = h("input", { id: `wn-${r.bssid}`, value: r.note || "", "aria-label": "Notatka" });
+      note.replaceChildren(input, h("div", { class: "actions" },
+        h("button", { class: "primary", type: "button", onclick: async (e) => {
+          const updated = await act(e.target, () => api("PATCH", `/api/wifi/known/${encodeURIComponent(r.bssid)}`, { note: input.value }), "Zapisano.");
+          if (updated) { Object.assign(r, updated); draw(); }
+        } }, "Zapisz"), h("button", { type: "button", onclick: draw }, "Anuluj")));
+      input.focus();
+    };
+    const where = r.lat == null ? h("span", { class: "muted" }, "brak")
+      : h("a", { href: `https://www.openstreetmap.org/?mlat=${r.lat}&mlon=${r.lon}#map=19/${r.lat}/${r.lon}`, target: "_blank", rel: "noopener" },
+        `${r.lat.toFixed(5)}, ${r.lon.toFixed(5)}`, r.radius ? ` ±${Math.round(r.radius)} m` : "");
+    return h("tr", {},
+      h("td", {}, r.ssid || h("span", { class: "muted" }, "(ukryta sieć)"), h("div", { class: "mono small muted" }, r.bssid)),
+      h("td", { class: "small" }, r.security || "–"),
+      h("td", { class: "small" }, channel(r.frequency), r.rssi != null ? h("div", { class: "muted" }, `${r.rssi} dBm`) : null),
+      h("td", { class: "small hide-sm" }, where),
+      h("td", { class: "small hide-sm" }, when(r.last_seen), r.missed ? h("div", { class: "muted" }, `nie słyszany ${r.missed}×`) : null),
+      note,
+      can("analityk") ? h("td", {}, h("div", { class: "actions" },
+        h("button", { type: "button", onclick: editNote }, "Notatka"),
+        h("button", { type: "button", onclick: (e) => act(e.target, () => api("DELETE", `/api/wifi/known/${encodeURIComponent(r.bssid)}`), "Usunięto ze znanych.").then(route) }, "Usuń")))
+        : h("td", {}));
+  };
+  const draw = () => {
+    const q = search.value.trim().toLowerCase();
+    const rows = data.routers.filter((r) => !q || JSON.stringify(r).toLowerCase().includes(q));
+    count.textContent = `${rows.length} z ${data.total}`;
+    body.replaceChildren(...rows.map(row));
+    if (!rows.length) body.replaceChildren(h("tr", {}, h("td", { colspan: 7, class: "empty" },
+      data.total ? "Nic nie pasuje." : "Brak znanych routerów. W aplikacji na telefonie: Radar Wi-Fi → „Zapamiętaj wszystkie jako znane”.")));
+  };
+  search.addEventListener("input", draw);
+  draw();
+  view.replaceChildren(
+    h("div", { class: "head" }, h("div", {}, h("h1", {}, "Wi-Fi"),
+      h("p", { class: "muted" }, "Znane routery zapisane z telefonów (wspólne dla całej drużyny) i czerwone flagi radaru."))),
+    h("section", { class: "card" }, h("h2", {}, `Czerwone flagi (${alerts.length})`),
+      alerts.length ? h("div", {}, alerts.map((f) => h("div", {},
+        h("p", { class: "muted small mono" }, `${f.ip} · ${WIFI_KIND[f.proto] || f.proto}`), findingBlock(f))))
+        : h("p", { class: "empty" }, "Brak czerwonych flag.")),
+    h("section", { class: "card" }, h("h2", {}, "Znane routery"),
+      h("div", { class: "row" }, h("div", {}, search), h("div", { class: "shrink" }, count)),
+      h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, h("th", {}, "Sieć"), h("th", {}, "Zabezpieczenie"), h("th", {}, "Kanał"),
+          h("th", { class: "hide-sm" }, "Położenie"), h("th", { class: "hide-sm" }, "Ostatnio"), h("th", {}, "Notatka"), h("th", {}, ""))), body))));
 }
 
 // ---- 5. Ustawienia (admin) ---------------------------------------------------------------
