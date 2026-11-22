@@ -25,6 +25,12 @@
   }
 
   var RED = '#e53935';
+  // "you are here": the AEGIS MESH logo, a gold map pin with a Wi-Fi sign; its tip marks the phone
+  var PIN = L.divIcon({ className: 'me-pin', iconSize: [36, 48], iconAnchor: [18, 46], html:
+    '<svg viewBox="0 0 24 32" width="36" height="48" aria-label="Tu jesteś">' +
+    '<path d="M12 2C6.5 2 2 6.4 2 12c0 7.5 10 18 10 18s10-10.5 10-18C22 6.4 17.5 2 12 2z" fill="#0a0a0a" stroke="#f2c230" stroke-width="2.2" stroke-linejoin="round"/>' +
+    '<path d="M8.8 11.8a4.5 4.5 0 0 1 6.4 0M7.05 9.05a7 7 0 0 1 9.9 0" fill="none" stroke="#f2c230" stroke-width="2" stroke-linecap="round"/>' +
+    '<circle cx="12" cy="15" r="1.9" fill="#f2c230"/></svg>' });
 
   // tap on a router or device: tell the app (it marks the row) and redraw at once
   function pick(id) {
@@ -63,9 +69,9 @@
       if (data.me) {
         var at = [data.me.lat, data.me.lon];
         if (!me) {
-          meRing = L.circle(at, { pane: 'meRing', radius: data.me.acc, color: '#2b8cff', weight: 1.5, fillColor: '#2b8cff', fillOpacity: 0.08, interactive: false }).addTo(map);
-          me = L.circleMarker(at, { pane: 'me', radius: 9, color: '#fff', weight: 3, fillColor: '#2b8cff', fillOpacity: 1 })
-            .bindTooltip('Tu jesteś', { className: 'router-label' }).addTo(map);
+          meRing = L.circle(at, { pane: 'meRing', radius: data.me.acc, color: '#f2c230', weight: 1.5, dashArray: '4 4', fillColor: '#f2c230', fillOpacity: 0.07, interactive: false }).addTo(map);
+          me = L.marker(at, { pane: 'me', icon: PIN, keyboard: false })
+            .bindTooltip('Tu jesteś', { className: 'router-label', direction: 'top', offset: [0, -44] }).addTo(map);
         } else { me.setLatLng(at); meRing.setLatLng(at).setRadius(data.me.acc); }
         if (first) { map.setView(at, 18); first = false; } else if (follow) map.panTo(at);
         note.style.display = 'none';

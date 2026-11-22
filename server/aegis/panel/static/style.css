@@ -37,7 +37,7 @@ code, .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, mono
   height: 60px; background: var(--black); border-bottom: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: .15em; text-decoration: none; color: var(--gold); }
 /* "◆ AEGIS MESH" like the app header */
-.mark { width: 11px; height: 11px; background: var(--gold); transform: rotate(45deg); margin: 0 3px; flex: none; }
+.mark { width: 18px; height: 24px; background: url("/static/logo.svg") center / contain no-repeat; margin: 0 2px; flex: none; }
 nav { display: flex; gap: 8px; flex: 1; overflow-x: auto; padding: 2px; }
 /* tabs: gold outline, the selected one filled gold (MainActivity.select) */
 nav a { padding: 7px 16px; border-radius: 9px; text-decoration: none; color: var(--gold); white-space: nowrap;
