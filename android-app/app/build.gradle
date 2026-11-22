@@ -9,8 +9,8 @@ android {
         applicationId 'pl.aegismesh.sensor'
         minSdk 26
         targetSdk 35
-        versionCode 9
-        versionName '1.0.1'
+        versionCode 10
+        versionName '1.1'
         // The laptop's Tailscale Funnel address. Another one: gradle -PaegisUrl=... or the AEGIS_FUNNEL_URL
         // repository variable in CI. When it does not answer, the app searches the Wi-Fi network.
         def funnel = (project.findProperty('aegisUrl') ?: '').toString().trim()

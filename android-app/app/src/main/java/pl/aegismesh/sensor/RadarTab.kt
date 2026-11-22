@@ -1,9 +1,18 @@
 package pl.aegismesh.sensor
 
 import android.Manifest.permission.ACCESS_FINE_LOCATION
+import android.annotation.SuppressLint
+import android.app.AlertDialog
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager.PERMISSION_GRANTED
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.net.wifi.WifiManager
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -11,30 +20,65 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.*
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
- * Tab 3: the Wi-Fi radar, a demo extra. Nearby access points compared with an optional
- * list of known routers (CSV). Everything stays on the phone; nothing is sent to the server.
- * Tapping a router opens the hot-cold finder.
+ * Tab 3: the Wi-Fi radar on a map. OpenStreetMap (Leaflet, bundled in assets/map) with the phone's GPS
+ * position. After every Wi-Fi scan the radar beam turns 1.5 times. With "Zbieraj" on, every router heard
+ * is saved as a ping (router + signal + GPS position); from all pings the app estimates where each router
+ * is (weighted centre and an uncertainty circle). Everything stays on the phone; "Eksport CSV" saves it.
  */
 internal class RadarTab(private val host: MainActivity) : Tab {
     private val context = host
+    private val dp = context.resources.displayMetrics.density
     private val radio = context.applicationContext.getSystemService(WifiManager::class.java)
+    private val gps = context.getSystemService(LocationManager::class.java)
     private val ticker = Handler(Looper.getMainLooper())
     private var lastScan = 0L
-    private val summary = TextView(context).apply { ink(Palette.MUTED); setPadding(8, 8, 8, 8) }
-    private val radar = RadarView(context).apply { onPing = { open(it.ap) } }
-    private val adapter = object : ArrayAdapter<Pair<SeenAp, Verdict>>(context, android.R.layout.simple_list_item_2, android.R.id.text1, mutableListOf()) {
+    private var location: Location? = null
+    private var collecting = false
+    private var mapReady = false
+    private var drawnPings = -1
+    private val pings: MutableList<Ping> by lazy { PingStore.load(context) }
+    private var estimates: Map<String, Estimate> = emptyMap()
+
+    private val summary = TextView(context).apply { ink(Palette.MUTED); textSize = 13f; setPadding(8, 4, 8, 4) }
+    private val collect = Button(context).apply { setOnClickListener { toggleCollecting() } }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private val map = WebView(context).apply {
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true
+        settings.userAgentString = settings.userAgentString + " AegisMesh/1.0 (radar Wi-Fi; github.com/PI0B0R/AEGIS-MESH)"
+        setBackgroundColor(Palette.BLACK)
+        webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest) = true
+            override fun onPageFinished(view: WebView, url: String) { mapReady = true; drawnPings = -1; pushMap() }
+        }
+        loadUrl("file:///android_asset/map/radar.html")
+    }
+
+    private class Row(val bssid: String, val seen: SeenAp?, val verdict: Verdict, val estimate: Estimate?)
+
+    private val adapter = object : ArrayAdapter<Row>(context, android.R.layout.simple_list_item_2, android.R.id.text1, mutableListOf()) {
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
             val view = super.getView(position, convertView, parent)
-            val (ap, verdict) = getItem(position)!!
+            val row = getItem(position)!!
+            val ssid = (row.seen?.ssid ?: row.estimate?.ssid).orEmpty().ifEmpty { "(ukryta sieć)" }
+            val signal = row.seen?.let { "${it.rssi} dBm" } ?: "poza zasięgiem"
             view.findViewById<TextView>(android.R.id.text1).apply {
-                text = "● ${verdict.status.label} · ${ap.ssid.ifEmpty { "(ukryta sieć)" }} · ${ap.rssi} dBm"
-                setTextColor(Palette.status(verdict.status))
+                text = "● ${row.verdict.status.label} · $ssid · $signal"
+                setTextColor(Palette.status(row.verdict.status))
             }
             view.findViewById<TextView>(android.R.id.text2).apply {
-                text = "${ap.bssid} · ${securityMode(ap.flags)} · ${verdict.reason}"; setTextColor(Palette.MUTED)
+                text = row.estimate?.let { "${it.pings} pingów z ${it.places} miejsc · położenie ±${it.radius.toInt()} m · pewność: ${it.confidence}" }
+                    ?: "${row.bssid} · brak pingów: włącz Zbieraj i przejdź się"
+                setTextColor(Palette.MUTED)
             }
             return view
         }
@@ -42,46 +86,205 @@ internal class RadarTab(private val host: MainActivity) : Tab {
     private val list = ListView(context).apply {
         adapter = this@RadarTab.adapter
         divider = android.graphics.drawable.ColorDrawable(Palette.GOLD_DIM); dividerHeight = 1
-        setOnItemClickListener { _, _, position, _ -> open(this@RadarTab.adapter.getItem(position)!!.first) }
+        setOnItemClickListener { _, _, position, _ -> details(this@RadarTab.adapter.getItem(position)!!) }
     }
+
     override val view: View = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
+        fun button(label: String, action: () -> Unit) = Button(context).apply { text = label; gold(outline = true); setOnClickListener { action() } }
+        fun weighted(@Suppress("UNUSED_PARAMETER") v: View) = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { setMargins(4, 2, 4, 2) }
         addView(LinearLayout(context).apply {
-            gravity = android.view.Gravity.CENTER_VERTICAL
-            addView(summary, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-            addView(Button(context).apply { text = "Znane routery"; gold(outline = true); setOnClickListener { importKnown() } })
+            val b1 = collect; val b2 = button("Wyśrodkuj") { js("aegis.center()") }; val b3 = button("Znane routery") { importKnown() }
+            addView(b1, weighted(b1)); addView(b2, weighted(b2)); addView(b3, weighted(b3))
         })
-        addView(radar, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1.1f))
+        addView(LinearLayout(context).apply {
+            val b1 = button("Eksport CSV") { exportCsv() }; val b2 = button("Wyczyść") { confirmClear() }
+            addView(b1, weighted(b1)); addView(b2, weighted(b2))
+        })
+        addView(summary)
+        addView(map, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1.7f).apply { setMargins(0, 4, 0, 4) })
         addView(list, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
     }
 
-    private fun open(ap: SeenAp) = context.startActivity(Intent(context, HotColdActivity::class.java)
-        .putExtra("bssid", ap.bssid).putExtra("ssid", ap.ssid))
+    init { showCollecting() }
+
+    // ---- Wi-Fi scans and GPS -------------------------------------------------------------
+
+    private val scanDone = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, intent: Intent) = onScan()
+    }
+    private var receiving = false
+
+    private val listener = object : LocationListener {
+        override fun onLocationChanged(l: Location) {
+            val old = location
+            // keep the better fix when a coarse network fix arrives right after a GPS one
+            if (old == null || l.provider == LocationManager.GPS_PROVIDER || l.accuracy <= old.accuracy ||
+                l.elapsedRealtimeNanos - old.elapsedRealtimeNanos > 20_000_000_000L) location = l
+            pushMap()
+        }
+        @Deprecated("old API") override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+        override fun onProviderEnabled(provider: String) {}
+        override fun onProviderDisabled(provider: String) {}
+    }
+
+    @SuppressLint("MissingPermission")
+    override fun refresh() {
+        ticker.removeCallbacksAndMessages(null)
+        if (context.checkSelfPermission(ACCESS_FINE_LOCATION) != PERMISSION_GRANTED) {
+            summary.text = "Radar potrzebuje zgody na lokalizację: bez niej Android nie pokazuje sieci Wi-Fi ani pozycji GPS."
+            host.askWifiPermissions()
+            return
+        }
+        if (!receiving) {
+            val filter = IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION)
+            if (android.os.Build.VERSION.SDK_INT >= 33) context.registerReceiver(scanDone, filter, Context.RECEIVER_NOT_EXPORTED)
+            else context.registerReceiver(scanDone, filter)
+            for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
+                if (runCatching { gps.isProviderEnabled(provider) }.getOrDefault(false)) {
+                    gps.requestLocationUpdates(provider, 2_000L, 1f, listener, Looper.getMainLooper())
+                    if (location == null) gps.getLastKnownLocation(provider)?.let { location = it }
+                }
+            }
+            receiving = true
+        }
+        tick()
+    }
+
+    /** Every 5 s: redraw from the cached scan; ask Android for a new scan at most every 30 s (its own limit is 4 per 2 min). */
+    @Suppress("DEPRECATION")
+    private fun tick() {
+        if (SystemClock.elapsedRealtime() - lastScan > 30_000) { lastScan = SystemClock.elapsedRealtime(); radio.startScan() }
+        show()
+        ticker.postDelayed(::tick, 5_000)
+    }
+
+    override fun stop() {
+        ticker.removeCallbacksAndMessages(null)
+        if (receiving) {
+            runCatching { context.unregisterReceiver(scanDone) }
+            runCatching { gps.removeUpdates(listener) }
+            receiving = false
+        }
+    }
+
+    /** A new scan arrived: turn the beam and, while collecting, save one ping per router. */
+    private fun onScan() {
+        js("aegis.sweep()")
+        val fix = location
+        if (collecting && fix != null) {
+            val fresh = (SystemClock.elapsedRealtimeNanos() - fix.elapsedRealtimeNanos) < 30_000_000_000L
+            if (fresh && fix.accuracy <= MAX_ACCURACY_M) {
+                val now = System.currentTimeMillis()
+                val heard = visible().map { Ping(now, fix.latitude, fix.longitude, fix.accuracy, it.bssid, it.ssid, it.rssi, it.frequency, it.flags) }
+                pings += heard
+                runCatching { PingStore.append(context, heard) }
+                host.say("Zapisano ${heard.size} pingów (GPS ±${fix.accuracy.toInt()} m).")
+            } else host.say("Pominięto skan: GPS za słaby (±${fix.accuracy.toInt()} m, potrzeba ±${MAX_ACCURACY_M.toInt()} m).")
+        }
+        show()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun visible(): List<SeenAp> = runCatching {
+        radio.scanResults.filter { it.BSSID != null }.map { SeenAp(it.SSID.orEmpty(), it.BSSID.lowercase(), it.level, it.frequency, it.capabilities.orEmpty()) }
+    }.getOrDefault(emptyList())
+
+    // ---- screen ------------------------------------------------------------------------
+
+    private fun show() {
+        val known = loadKnown(context)
+        val seen = visible().associateBy { it.bssid }
+        estimates = estimate(pings).associateBy { it.bssid }
+        val rows = (seen.keys + estimates.keys).map { bssid ->
+            val ap = seen[bssid] ?: estimates.getValue(bssid).last.ap
+            Row(bssid, seen[bssid], classify(ap, known), estimates[bssid])
+        }.sortedWith(compareBy<Row>({ it.verdict.status.rank }, { it.seen == null }, { -(it.seen?.rssi ?: -200) }))
+        adapter.clear(); adapter.addAll(rows)
+
+        val counts = rows.groupingBy { it.verdict.status }.eachCount()
+        val fix = location?.let { "GPS ±${it.accuracy.toInt()} m" } ?: "brak GPS"
+        summary.text = Status.values().joinToString(" · ") { "${it.label}: ${counts[it] ?: 0}" } +
+            "\nPingi: ${pings.size} · routery na mapie: ${estimates.size} · $fix · znane routery: ${known.size}"
+        pushMap(rows)
+    }
+
+    private fun pushMap(rows: List<Row>? = null) {
+        if (!mapReady) return
+        val data = JSONObject()
+        location?.let { data.put("me", JSONObject().put("lat", it.latitude).put("lon", it.longitude).put("acc", it.accuracy.toDouble())) }
+        if (location == null) data.put("waiting", "Czekam na GPS… Wyjdź bliżej okna albo na zewnątrz.")
+        val routers = JSONArray()
+        val list = rows ?: (0 until adapter.count).map { adapter.getItem(it)!! }
+        list.forEach { row ->
+            val e = row.estimate ?: return@forEach
+            val name = e.ssid.ifEmpty { "(ukryta sieć)" }
+            routers.put(JSONObject().put("lat", e.lat).put("lon", e.lon).put("r", e.radius)
+                .put("color", hex(Palette.status(row.verdict.status)))
+                .put("label", "$name · ±${e.radius.toInt()} m · pewność ${e.confidence}"))
+        }
+        data.put("routers", routers)
+        js("aegis.update($data)")
+        if (drawnPings != pings.size) {
+            drawnPings = pings.size
+            val dots = JSONArray()
+            pings.takeLast(3_000).forEach { dots.put(JSONArray().put(it.lat).put(it.lon).put(it.rssi)) }
+            js("aegis.pings($dots)")
+        }
+    }
+
+    private fun js(code: String) { if (mapReady) map.evaluateJavascript(code, null) }
+
+    private fun hex(color: Int) = String.format("#%06X", 0xFFFFFF and color)
+
+    private fun toggleCollecting() {
+        collecting = !collecting
+        showCollecting()
+        if (collecting) {
+            lastScan = 0L
+            host.say("Zbieram pingi. Chodź powoli po budynku; skan co ok. 30 s.")
+            ticker.removeCallbacksAndMessages(null); if (receiving) tick()
+        } else host.say("Zbieranie zatrzymane. Pingi są zapisane na telefonie.")
+    }
+
+    private fun showCollecting() {
+        collect.text = if (collecting) "■ Stop" else "▶ Zbieraj"
+        collect.gold(outline = !collecting)
+    }
+
+    private fun details(row: Row) {
+        val ap = row.seen ?: row.estimate?.last?.ap
+        val e = row.estimate
+        val text = listOfNotNull(
+            row.bssid,
+            ap?.let { "Zabezpieczenie: ${securityMode(it.flags)} · ${it.frequency} MHz" },
+            row.seen?.let { "Sygnał teraz: ${it.rssi} dBm" } ?: "Teraz poza zasięgiem",
+            row.verdict.reason,
+            e?.let { "Pingi: ${it.pings} z ${it.places} miejsc · najlepszy sygnał ${it.bestRssi} dBm\nPołożenie: ±${it.radius.toInt()} m, pewność ${it.confidence}" }
+                ?: "Brak pingów. Włącz „Zbieraj” i przejdź się w pobliżu.",
+        ).joinToString("\n\n")
+        AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle((ap?.ssid ?: "").ifEmpty { "(ukryta sieć)" })
+            .setMessage(text)
+            .apply { if (e != null) setPositiveButton("Pokaż na mapie") { _, _ -> js("aegis.focus(${e.lat}, ${e.lon})") } }
+            .setNeutralButton("Ciepło-zimno") { _, _ -> open(row.bssid, ap?.ssid.orEmpty()) }
+            .setNegativeButton("Zamknij", null).show()
+    }
+
+    private fun open(bssid: String, ssid: String) = context.startActivity(Intent(context, HotColdActivity::class.java)
+        .putExtra("bssid", bssid).putExtra("ssid", ssid))
 
     private fun importKnown() = host.startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
         .setType("*/*").putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("text/csv", "text/comma-separated-values", "text/plain")), MainActivity.PICK_KNOWN)
 
-    /** Reads the cached scan every 5 s and asks Android for a new one at most every 30 s. */
-    @Suppress("DEPRECATION")
-    override fun refresh() {
-        ticker.removeCallbacksAndMessages(null)
-        if (context.checkSelfPermission(ACCESS_FINE_LOCATION) != PERMISSION_GRANTED) {
-            summary.text = "Radar potrzebuje zgody na lokalizację: bez niej Android nie pokazuje sieci Wi-Fi."
-            host.askWifiPermissions()
-            return
-        }
-        if (SystemClock.elapsedRealtime() - lastScan > 30_000) { lastScan = SystemClock.elapsedRealtime(); radio.startScan() }
-        val known = loadKnown(context)
-        val rows = radio.scanResults.filter { it.BSSID != null }.map {
-            val ap = SeenAp(it.SSID.orEmpty(), it.BSSID.lowercase(), it.level, it.frequency, it.capabilities.orEmpty())
-            ap to classify(ap, known)
-        }.sortedWith(compareBy<Pair<SeenAp, Verdict>>({ it.second.status.rank }, { -it.first.rssi }))
-        adapter.clear(); adapter.addAll(rows)
-        radar.pings = rows.map { RadarView.Ping(it.first, it.second.status) }
-        val counts = rows.groupingBy { it.second.status }.eachCount()
-        summary.text = Status.values().joinToString(" · ") { "${it.label}: ${counts[it] ?: 0}" } + "\nznane routery: ${known.size}"
-        ticker.postDelayed(::refresh, 5000)
-    }
+    private fun exportCsv() = host.startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+        .setType("text/csv").putExtra(Intent.EXTRA_TITLE, "aegis-pingi.csv"), MainActivity.EXPORT_PINGS)
 
-    override fun stop() = ticker.removeCallbacksAndMessages(null)
+    private fun confirmClear() {
+        AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Usunąć wszystkie pingi?")
+            .setMessage("Zebrane pingi (${pings.size}) i położenia routerów znikną z telefonu. Najpierw możesz zrobić Eksport CSV.")
+            .setPositiveButton("Usuń") { _, _ -> PingStore.clear(context); pings.clear(); host.say("Pingi usunięte."); show() }
+            .setNegativeButton("Anuluj", null).show()
+    }
 }
