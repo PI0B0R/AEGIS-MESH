@@ -28,7 +28,7 @@ data class Estimate(
     }
 }
 
-/** Pings with GPS worse than this are not stored: they would only blur the estimate. */
+/** Pings with GPS worse than this are kept and drawn, but left out of the router estimate: they would only blur it. */
 const val MAX_ACCURACY_M = 30f
 
 const val PING_HEADER = "time,lat,lon,accuracy_m,bssid,ssid,rssi_dbm,frequency_mhz,flags"
@@ -64,7 +64,7 @@ fun weight(rssi: Int): Double = 10.0.pow((rssi + 100) / 20.0)
  * Weighted centre of all pings of one router. The radius is the weighted spread of the pings
  * around that centre, never smaller than the GPS accuracy, and at least 30 m from fewer than 3 places.
  */
-fun estimate(pings: List<Ping>): List<Estimate> = pings.groupBy { it.bssid }.map { (bssid, list) ->
+fun estimate(pings: List<Ping>): List<Estimate> = pings.filter { it.accuracy <= MAX_ACCURACY_M }.groupBy { it.bssid }.map { (bssid, list) ->
     val total = list.sumOf { weight(it.rssi) }
     val lat = list.sumOf { weight(it.rssi) * it.lat } / total
     val lon = list.sumOf { weight(it.rssi) * it.lon } / total
@@ -76,3 +76,17 @@ fun estimate(pings: List<Ping>): List<Estimate> = pings.groupBy { it.bssid }.map
     val last = list.maxBy { it.time }
     Estimate(bssid, last.ssid, lat, lon, radius, list.size, places, list.maxOf { it.rssi }, last)
 }.sortedBy { it.radius }
+
+/** Rough distance in metres from signal strength (log-distance model: -40 dBm at 1 m, exponent 2.7). */
+fun rssiDistance(rssi: Int): Double = 10.0.pow((-40.0 - rssi) / 27.0).coerceIn(1.0, 80.0)
+
+/**
+ * Where to draw a device heard in the current scan: at its rough distance from the phone. Wi-Fi gives no
+ * direction, so the angle only comes from the BSSID (stable per device) to spread the dots apart.
+ */
+fun devicePosition(lat: Double, lon: Double, bssid: String, rssi: Int): Pair<Double, Double> {
+    val d = rssiDistance(rssi)
+    val angle = Math.toRadians((bssid.hashCode().toLong() and 0xffff) % 360.0)
+    val north = d * kotlin.math.cos(angle); val east = d * kotlin.math.sin(angle)
+    return (lat + north / 110_540.0) to (lon + east / (111_320.0 * cos(Math.toRadians(lat))))
+}

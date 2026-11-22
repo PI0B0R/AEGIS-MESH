@@ -8,6 +8,7 @@
   var follow = true, first = true, me = null, meRing = null, sweepMarker = null;
   var pingLayer = L.layerGroup().addTo(map);
   var routerLayer = L.layerGroup().addTo(map);
+  var deviceLayer = L.layerGroup().addTo(map);
   var note = document.getElementById('note');
   map.on('dragstart', function () { follow = false; });
 
@@ -39,12 +40,23 @@
         L.circleMarker([r.lat, r.lon], { radius: 7, color: '#0a0a0a', weight: 2, fillColor: r.color, fillOpacity: 1 })
           .bindTooltip(r.label, { className: 'router-label' }).addTo(routerLayer);
       });
+      // devices heard in the latest scan, around the phone at their rough distance (tap for name and signal)
+      deviceLayer.clearLayers();
+      var centre = me ? me.getLatLng() : null;
+      (data.devices || []).forEach(function (d) {
+        if (centre) L.polyline([centre, [d.lat, d.lon]], { color: d.color, weight: 1, opacity: 0.35 }).addTo(deviceLayer);
+        L.circleMarker([d.lat, d.lon], { radius: 6, color: '#0a0a0a', weight: 1.5, fillColor: d.color, fillOpacity: 0.95 })
+          .bindTooltip(d.label, { className: 'router-label' }).addTo(deviceLayer);
+      });
     },
-    /** All pings as [lat, lon, rssi]: small dots coloured by signal strength. */
+    /** All pings as [lat, lon, rssi, goodGps]: small dots coloured by signal; hollow when the GPS was weak. */
     pings: function (list) {
       pingLayer.clearLayers();
       list.forEach(function (p) {
-        L.circleMarker([p[0], p[1]], { radius: 3, stroke: false, fillColor: heat(p[2]), fillOpacity: 0.7 }).addTo(pingLayer);
+        var good = p[3] !== 0;
+        L.circleMarker([p[0], p[1]], good
+          ? { radius: 3, stroke: false, fillColor: heat(p[2]), fillOpacity: 0.7 }
+          : { radius: 3, weight: 1, color: heat(p[2]), fillOpacity: 0 }).addTo(pingLayer);
       });
     },
     /** One and a half turns of the radar beam around the phone, then it fades out. */
