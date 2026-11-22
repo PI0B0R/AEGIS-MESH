@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 108 x 108 canvas; the visible part of an adaptive icon is the middle 72 x 72. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- shield -->
+    <path android:fillColor="#181612" android:strokeColor="#D4AF37" android:strokeWidth="3.5" android:strokeLineJoin="round"
+        android:pathData="M54,24 L76,33 C76,56 68,72 54,84 C40,72 32,56 32,33 Z"/>
+    <!-- radar arcs -->
+    <path android:strokeColor="#D4AF37" android:strokeWidth="3" android:strokeLineCap="round"
+        android:pathData="M45,58 A12,12 0 0 1 63,58"/>
+    <path android:strokeColor="#D4AF37" android:strokeWidth="3" android:strokeLineCap="round"
+        android:pathData="M40,51 A19,19 0 0 1 68,51"/>
+    <!-- centre dot -->
+    <path android:fillColor="#D4AF37"
+        android:pathData="M54,62 m-4,0 a4,4 0 1 0 8,0 a4,4 0 1 0 -8,0"/>
+</vector>
