@@ -91,7 +91,9 @@ def to_generic(finding: dict, evidence: dict | None) -> dict:
     tech = ", ".join(f"{t['name']} {t['version'] or ''}".strip() for t in finding["technologies"]) or "brak"
     reasons = "\n".join(f"- [{r['priority']}] {r['message']} ({r['evidence']})" if r.get("evidence") else
                         f"- [{r['priority']}] {r['message']}" for r in finding["reasons"])
-    lines = [finding["title"], "", f"Usługa: {finding['ip']}:{finding['port']}/{finding['proto']}",
+    wifi = str(finding["proto"]).startswith("wifi")
+    place = f"Wi-Fi BSSID {finding['ip']} ({finding['proto']})" if wifi else f"Usługa: {finding['ip']}:{finding['port']}/{finding['proto']}"
+    lines = [finding["title"], "", place,
              f"Priorytet AEGIS: {finding['priority']}/5", f"Technologie: {tech}",
              f"Tagi: {', '.join(finding['tags']) or 'brak'}", f"Pierwszy raz: {finding['first_seen']}",
              f"Ostatnio: {finding['last_seen']}", "", "Dlaczego:", reasons or "- usługa wykryta skanem discovery"]
@@ -104,7 +106,8 @@ def to_generic(finding: dict, evidence: dict | None) -> dict:
             tls = evidence["tls"]
             lines.append(f"- Certyfikat: {tls.get('subject')} od {tls.get('issuer')}, ważny do {tls.get('not_after')}")
     return {
-        "title": f"[AEGIS P{finding['priority']}] {finding['ip']}:{finding['port']} {finding['title']}"[:500],
+        "title": (f"[AEGIS P{finding['priority']}] Wi-Fi {finding['ip']} {finding['title']}" if wifi else
+                  f"[AEGIS P{finding['priority']}] {finding['ip']}:{finding['port']} {finding['title']}")[:500],
         "description": "\n".join(lines),
         "severity": SEVERITY,
         "active": finding["state"] == "active",
@@ -115,8 +118,9 @@ def to_generic(finding: dict, evidence: dict | None) -> dict:
         "vuln_id_from_tool": (finding["reasons"][0]["signature"] if finding["reasons"] else "service"),
         "component_name": finding["technologies"][0]["name"] if finding["technologies"] else None,
         "component_version": finding["technologies"][0]["version"] if finding["technologies"] else None,
-        "endpoints": [{"host": finding["ip"], "port": finding["port"], "protocol":
-                       (evidence or {}).get("scheme") or finding["proto"]}],
+        # a BSSID is not a network host, so Wi-Fi flags have no endpoint (the BSSID is in the title)
+        "endpoints": [] if wifi else [{"host": finding["ip"], "port": finding["port"], "protocol":
+                                       (evidence or {}).get("scheme") or finding["proto"]}],
         "tags": ["aegis-mesh", f"priorytet-{finding['priority']}", *finding["tags"]][:20],
     }
 

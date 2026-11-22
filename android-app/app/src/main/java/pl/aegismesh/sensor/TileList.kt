@@ -119,7 +119,7 @@ internal class TileList(private val host: MainActivity) {
         Kind.PRIORITY -> {
             val sub = (listOf("${findingPlace(o)} · ${o.optString("status")}") + listOfNotNull(techList(o).takeIf { it.isNotEmpty() }) +
                 reasonList(o).take(1).map { "• $it" }).joinToString("\n")
-            row(context, o.optInt("priority"), o.optString("title"), sub).apply { setOnClickListener { showHost(host, o.optString("ip"), focus = o) } }
+            row(context, o.optInt("priority"), o.optString("title"), sub).apply { setOnClickListener { openFinding(host, o) } }
         }
     }
 

@@ -16,7 +16,21 @@ internal const val CHECKED = "potwierdzone"
 /** A P4-5 finding still waits for someone when its status is "nowe". */
 internal fun waiting(finding: JSONObject) = finding.optString("status") == "nowe"
 
-internal fun findingPlace(f: JSONObject) = "${f.optString("ip")}:${f.optInt("port")}/${f.optString("proto", "tcp")}"
+/** Red flags from the Wi-Fi radar: ip is the BSSID, proto the kind. */
+internal fun isWifi(f: JSONObject) = f.optString("proto").startsWith("wifi")
+
+internal val WIFI_KINDS = mapOf(
+    "wifi-nowy" to "nowy router / hotspot", "wifi-evil-twin" to "możliwy evil twin", "wifi-zabezpieczenie" to "słabsze zabezpieczenie",
+    "wifi-przesuniety" to "router przesunięty", "wifi-zniknal" to "router zniknął",
+)
+
+internal fun findingPlace(f: JSONObject) =
+    if (isWifi(f)) "Wi-Fi ${f.optString("ip")} · ${WIFI_KINDS[f.optString("proto")] ?: f.optString("proto")}"
+    else "${f.optString("ip")}:${f.optInt("port")}/${f.optString("proto", "tcp")}"
+
+/** A Wi-Fi red flag has no host card, so it opens the finding itself. */
+internal fun openFinding(host: MainActivity, f: JSONObject) =
+    if (isWifi(f)) showFinding(host, f) else showHost(host, f.optString("ip"), focus = f)
 
 /** The server's finding statuses with the words the phone shows for them. */
 internal val STATUSES = linkedMapOf(
@@ -96,7 +110,7 @@ internal class AlertsTab(private val host: MainActivity) : Tab {
             reasonList(f).firstOrNull()?.let { "• $it" }.orEmpty()).filter { it.isNotEmpty() }.joinToString(" · ")
         val view = row(context, f.optInt("priority"), f.optString("title"), sub)
         if (!waiting(f)) view.alpha = 0.65f
-        view.setOnClickListener { showHost(host, f.optString("ip"), focus = f) }
+        view.setOnClickListener { openFinding(host, f) }
         if (!host.session.canEditFindings) return view
 
         val box = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; addView(view) }
