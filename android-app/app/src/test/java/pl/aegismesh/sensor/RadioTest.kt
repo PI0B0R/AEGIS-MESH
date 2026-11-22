@@ -31,13 +31,6 @@ class RadioTest {
         assertEquals("WPA3-PERSONAL", securityMode("[RSN-SAE-CCMP][ESS]"))
         assertEquals("UNKNOWN", securityMode("[IBSS]"))
     }
-    @Test fun placeFromQr() {
-        assertEquals(Place("B1", "2", "215"), parsePlace("aegis-place:B1/2/215"))
-        assertEquals(Place("C-2", "", ""), parsePlace("AEGIS-PLACE:C-2"))
-        assertNull(parsePlace("https://example.org/x"))
-        assertNull(parsePlace("aegis-place:/2/215"))
-        assertEquals("B1 · piętro 2 · sala 215", Place("B1", "2", "215").toString())
-    }
     @Test fun hotColdTrend() {
         assertEquals("Cieplej", trend(-70, -64))
         assertEquals("Zimniej", trend(-60, -66))

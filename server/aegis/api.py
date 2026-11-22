@@ -164,7 +164,8 @@ def create_app(data_dir: str | os.PathLike | None = None, key_path: str | os.Pat
             nmap = nmap_binary()
         except RuntimeError:
             nmap = None
-        return {"ok": True, "version": __version__, "nmap": nmap, "active_run": engine.active_run_id()}
+        # Public (no login), also through Tailscale Funnel: says only that this is AEGIS MESH and whether it can scan.
+        return {"ok": True, "service": "aegis-mesh", "version": __version__, "nmap": nmap is not None}
 
     # ---- targets -----------------------------------------------------------------
     def _save_targets(targets, source: str, extra_note: str | None = None) -> dict:

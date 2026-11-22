@@ -1,26 +1,7 @@
 package pl.aegismesh.sensor
 
 import android.content.Context
-import android.content.SharedPreferences
 import java.io.File
-import java.util.UUID
-
-/** One id per installation, so several phones can be told apart on the laptop. */
-internal fun sensorId(prefs: SharedPreferences): String {
-    prefs.getString("sensor_id", null)?.let { return it }
-    val id = "PHONE-" + UUID.randomUUID().toString().replace("-", "").take(8).uppercase()
-    prefs.edit().putString("sensor_id", id).apply()
-    return id
-}
-
-internal fun savedPlace(prefs: SharedPreferences): Place? = place(
-    prefs.getString("place_building", "").orEmpty(), prefs.getString("place_floor", "").orEmpty(),
-    prefs.getString("place_room", "").orEmpty())
-
-internal fun storePlace(prefs: SharedPreferences, value: Place?) {
-    prefs.edit().putString("place_building", value?.building.orEmpty()).putString("place_floor", value?.floor.orEmpty())
-        .putString("place_room", value?.room.orEmpty()).apply()
-}
 
 private fun knownFile(context: Context) = File(context.filesDir, "known_routers.csv")
 @Volatile private var cache: Pair<Long, List<KnownAp>>? = null

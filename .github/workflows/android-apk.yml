@@ -2,7 +2,8 @@ name: Android APK
 
 on:
   push:
-    branches: [main]
+    paths: ["android-app/**", ".github/workflows/android-apk.yml"]
+  pull_request:
     paths: ["android-app/**", ".github/workflows/android-apk.yml"]
   workflow_dispatch:
 
@@ -10,7 +11,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: android-apk
+  group: android-apk-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -29,12 +30,16 @@ jobs:
       - name: Unit tests
         run: chmod +x gradlew && ./gradlew --no-daemon testDebugUnitTest
       - name: Build debug APK
-        run: ./gradlew --no-daemon assembleDebug && cp app/build/outputs/apk/debug/app-debug.apk aegis-mesh.apk
+        # The laptop's Tailscale Funnel address goes into the app (repository variable AEGIS_FUNNEL_URL, may be empty).
+        env:
+          AEGIS_FUNNEL_URL: ${{ vars.AEGIS_FUNNEL_URL }}
+        run: ./gradlew --no-daemon assembleDebug -PaegisUrl="$AEGIS_FUNNEL_URL" && cp app/build/outputs/apk/debug/app-debug.apk aegis-mesh.apk
       - uses: actions/upload-artifact@v4
         with:
           name: aegis-mesh-apk
           path: android-app/aegis-mesh.apk
       - name: Publish to the "apk-latest" release
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

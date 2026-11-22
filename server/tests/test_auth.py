@@ -37,7 +37,8 @@ def people(client):
 
 
 def test_everything_needs_a_login_except_health_and_login(client):
-    assert client.get("/api/health").status_code == 200
+    health = client.get("/api/health").json()
+    assert health["service"] == "aegis-mesh" and set(health) == {"ok", "service", "version", "nmap"}   # the phone looks for this
     assert client.get("/").status_code == 200                          # the panel page itself
     assert client.get("/api/targets").status_code == 401
     assert client.get("/api/findings", headers={"Authorization": "Bearer zly"}).status_code == 401

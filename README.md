@@ -23,6 +23,7 @@ Panel: http://127.0.0.1:8000 (login `admin`), API: http://127.0.0.1:8000/docs.
 | [docs/DOKUMENTACJA.md](docs/DOKUMENTACJA.md) | dokumentacja techniczna: architektura, bezpieczeństwo, dane, role, API, testy |
 | [server/README.md](server/README.md) | obsługa krok po kroku: cele, skany, harmonogram, sygnatury, DefectDojo, eksport |
 | [demo/pokaz.sh](demo/pokaz.sh) | pokaz dla jury: 5 skanów ze zmianami, edycje, role, sygnatury, eksport i import |
+| [android-app/README.md](android-app/README.md) | aplikacja na telefon i Tailscale Funnel |
 | [ZAMYSL_PROJEKTU.md](ZAMYSL_PROJEKTU.md) | pierwotny zamysł projektu |
 
 ## Katalogi
@@ -31,4 +32,5 @@ Panel: http://127.0.0.1:8000 (login `admin`), API: http://127.0.0.1:8000/docs.
 - `lab/`: strony sieci testowej z `docker-compose.yml`
 - `demo/`: skrypt pokazu
 - `docs/`: dokumentacja i zrzuty ekranu
-- `android-app/`, `aegis-web/`: wcześniejsze prototypy (aplikacja na telefon to etap 5)
+- `android-app/`: aplikacja na Androida (Pulpit, Alerty, Radar Wi-Fi), opis w [android-app/README.md](android-app/README.md)
+- `aegis-web/`: wcześniejszy prototyp
