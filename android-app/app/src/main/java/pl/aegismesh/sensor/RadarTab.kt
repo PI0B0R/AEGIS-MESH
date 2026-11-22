@@ -144,9 +144,10 @@ internal class RadarTab(private val host: MainActivity) : Tab {
     private val listener = object : LocationListener {
         override fun onLocationChanged(l: Location) {
             val old = location
-            // keep the better fix when a coarse network fix arrives right after a GPS one
+            // keep the better fix when a coarse network fix arrives right after a GPS one; after 5 s any newer fix wins,
+            // so the dot follows the phone while walking
             if (old == null || l.provider == LocationManager.GPS_PROVIDER || l.accuracy <= old.accuracy ||
-                l.elapsedRealtimeNanos - old.elapsedRealtimeNanos > 20_000_000_000L) location = l
+                l.elapsedRealtimeNanos - old.elapsedRealtimeNanos > 5_000_000_000L) location = l
             pushMap()
         }
         @Deprecated("old API") override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
@@ -185,7 +186,7 @@ internal class RadarTab(private val host: MainActivity) : Tab {
         enableGps.visibility = if (sources.isEmpty()) View.VISIBLE else View.GONE
         if (listening || sources.isEmpty()) return
         for (provider in sources) {
-            runCatching { gps.requestLocationUpdates(provider, 2_000L, 0f, listener, Looper.getMainLooper()) }
+            runCatching { gps.requestLocationUpdates(provider, 1_000L, 0f, listener, Looper.getMainLooper()) }
             runCatching { gps.getLastKnownLocation(provider) }.getOrNull()?.let { l ->
                 if (location.let { it == null || l.time > it.time }) location = l
             }
